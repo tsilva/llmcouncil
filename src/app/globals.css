@@ -33,7 +33,9 @@ html {
 
 body {
   min-height: 100vh;
-  background: var(--background);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.52), transparent 30%),
+    linear-gradient(180deg, rgba(252, 246, 236, 0.86) 0%, rgba(236, 223, 201, 0.92) 100%);
   color: var(--foreground);
   font-family: var(--font-display), sans-serif;
 }
@@ -105,4 +107,288 @@ a {
 
 .balance-text {
   text-wrap: balance;
+}
+
+.council-scene {
+  position: relative;
+  min-height: 25rem;
+  overflow: hidden;
+  border-radius: 1.6rem;
+  border: 1px solid rgba(50, 38, 29, 0.08);
+  background:
+    radial-gradient(circle at top, rgba(255, 247, 231, 0.9), transparent 45%),
+    linear-gradient(180deg, rgba(122, 79, 44, 0.06) 0%, rgba(122, 79, 44, 0.12) 100%);
+}
+
+.council-scene::after {
+  content: "";
+  position: absolute;
+  inset: auto 8% 0.75rem;
+  height: 32%;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, rgba(111, 68, 37, 0.12), transparent 68%);
+  filter: blur(10px);
+}
+
+.council-table-shadow {
+  position: absolute;
+  left: 50%;
+  top: 53%;
+  width: min(78%, 29rem);
+  height: 8.5rem;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgba(79, 44, 24, 0.12);
+  filter: blur(18px);
+}
+
+.council-table {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(78%, 29rem);
+  height: 8.5rem;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 1px solid rgba(102, 59, 32, 0.22);
+  background:
+    radial-gradient(circle at 50% 28%, rgba(255, 233, 202, 0.7), transparent 42%),
+    linear-gradient(180deg, #a8683b 0%, #7f4927 100%);
+  box-shadow:
+    inset 0 0.45rem 1.1rem rgba(255, 240, 220, 0.22),
+    inset 0 -1rem 1.4rem rgba(74, 39, 19, 0.22);
+}
+
+.council-table-inner {
+  position: absolute;
+  inset: 16% 11%;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 245, 233, 0.2);
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255, 248, 237, 0.4), transparent 46%),
+    rgba(87, 49, 26, 0.16);
+}
+
+.bot-seat {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+  transform: translate(-50%, -50%);
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease,
+    filter 180ms ease;
+  z-index: 2;
+}
+
+.bot-seat:not(.is-speaking) {
+  opacity: 0.74;
+}
+
+.bot-seat.is-speaking {
+  transform: translate(-50%, -54%) scale(1.04);
+  z-index: 4;
+}
+
+.bot-avatar {
+  position: relative;
+  width: 3.8rem;
+  height: 3.2rem;
+  border-radius: 1.1rem;
+  border: 1px solid rgba(49, 39, 31, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 253, 249, 0.96) 0%, rgba(239, 228, 214, 0.98) 100%);
+  box-shadow:
+    0 0.8rem 1.6rem rgba(75, 48, 32, 0.1),
+    inset 0 0.1rem 0 rgba(255, 255, 255, 0.8);
+}
+
+.bot-avatar::before,
+.bot-avatar::after {
+  content: "";
+  position: absolute;
+  top: -0.4rem;
+  width: 0.12rem;
+  height: 0.5rem;
+  background: rgba(73, 58, 48, 0.55);
+}
+
+.bot-avatar::before {
+  left: 1.15rem;
+}
+
+.bot-avatar::after {
+  right: 1.15rem;
+}
+
+.bot-eye,
+.bot-mouth {
+  position: absolute;
+  display: block;
+  background: rgba(42, 35, 31, 0.8);
+}
+
+.bot-eye {
+  top: 1.15rem;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 999px;
+}
+
+.bot-eye-left {
+  left: 1.05rem;
+}
+
+.bot-eye-right {
+  right: 1.05rem;
+}
+
+.bot-mouth {
+  left: 50%;
+  bottom: 0.8rem;
+  width: 1rem;
+  height: 0.15rem;
+  border-radius: 999px;
+  transform: translateX(-50%);
+}
+
+.bot-seat-label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+  max-width: 7rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(255, 251, 246, 0.86);
+  border: 1px solid rgba(50, 38, 29, 0.08);
+  box-shadow: 0 0.4rem 0.9rem rgba(79, 52, 34, 0.08);
+  font-size: 0.72rem;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.bot-seat-status {
+  color: var(--accent-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.balloon-stack {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  gap: 0.75rem;
+  width: min(44%, 20rem);
+}
+
+.balloon-stack-left {
+  align-items: flex-start;
+}
+
+.balloon-stack-right {
+  align-items: flex-end;
+}
+
+.balloon-stack-center {
+  align-items: center;
+}
+
+.speech-balloon {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.95rem 1rem;
+  border-radius: 1.35rem;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(50, 38, 29, 0.1);
+  box-shadow:
+    0 1rem 2.2rem rgba(77, 53, 37, 0.12),
+    inset 0 0.06rem 0 rgba(255, 255, 255, 0.95);
+}
+
+.speech-balloon p {
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  line-height: 1.65;
+}
+
+.balloon-stack-left .speech-balloon:last-child::after,
+.balloon-stack-right .speech-balloon:last-child::after,
+.balloon-stack-center .speech-balloon:last-child::after {
+  content: "";
+  position: absolute;
+  width: 1.05rem;
+  height: 1.05rem;
+  background: inherit;
+  border: inherit;
+  border-left: 0;
+  border-top: 0;
+}
+
+.balloon-stack-left .speech-balloon:last-child::after {
+  left: -0.35rem;
+  bottom: 1rem;
+  transform: rotate(135deg);
+}
+
+.balloon-stack-right .speech-balloon:last-child::after {
+  right: -0.35rem;
+  bottom: 1rem;
+  transform: rotate(-45deg);
+}
+
+.balloon-stack-center .speech-balloon:last-child::after {
+  left: 50%;
+  bottom: -0.38rem;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+@media (max-width: 900px) {
+  .council-scene {
+    min-height: 28rem;
+  }
+
+  .council-table-shadow,
+  .council-table {
+    width: 88%;
+  }
+
+  .balloon-stack {
+    width: min(62%, 18rem);
+  }
+}
+
+@media (max-width: 640px) {
+  .council-scene {
+    min-height: 30rem;
+  }
+
+  .bot-avatar {
+    width: 3.25rem;
+    height: 2.8rem;
+  }
+
+  .balloon-stack {
+    width: calc(100% - 1.5rem);
+  }
+
+  .balloon-stack-left,
+  .balloon-stack-right,
+  .balloon-stack-center {
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    top: 1rem !important;
+    align-items: flex-start;
+    transform: none !important;
+  }
+
+  .balloon-stack-right .speech-balloon:last-child::after,
+  .balloon-stack-center .speech-balloon:last-child::after {
+    left: 1.1rem;
+    right: auto;
+    bottom: -0.35rem;
+    transform: rotate(45deg);
+  }
 }

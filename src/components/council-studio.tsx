@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from "react";
 import {
   MODEL_SUGGESTIONS,
   addUsage,
+  createRosterSnapshot,
   createDefaultInput,
   createMember,
   emptyUsage,
@@ -129,27 +130,145 @@ function UsageBadge({
   );
 }
 
-function TurnCard({
+function kindLabel(kind: CouncilTurn["kind"]): string {
+  return kind.replace(/_/g, " ");
+}
+
+function seatPosition(index: number, total: number): { left: number; top: number } {
+  const angle = ((index / Math.max(total, 1)) * Math.PI * 2) - Math.PI / 2;
+  const radiusX = total <= 4 ? 34 : 39;
+  const radiusY = total <= 4 ? 22 : 28;
+
+  return {
+    left: 50 + Math.cos(angle) * radiusX,
+    top: 50 + Math.sin(angle) * radiusY,
+  };
+}
+
+function bubblePlacement(position: { left: number; top: number }): {
+  className: string;
+  style: React.CSSProperties;
+} {
+  if (position.top <= 28) {
+    return {
+      className: "balloon-stack-center",
+      style: {
+        left: "50%",
+        top: "8%",
+        transform: "translateX(-50%)",
+      },
+    };
+  }
+
+  if (position.left < 50) {
+    return {
+      className: "balloon-stack-left",
+      style: {
+        left: `${Math.min(position.left + 12, 54)}%`,
+        top: `${Math.max(position.top - 12, 26)}%`,
+      },
+    };
+  }
+
+  return {
+    className: "balloon-stack-right",
+    style: {
+      right: `${Math.min(100 - position.left + 12, 54)}%`,
+      top: `${Math.max(position.top - 12, 26)}%`,
+    },
+  };
+}
+
+function TurnScene({
   turn,
+  roster,
 }: {
   turn: CouncilTurn;
+  roster: ParticipantConfig[];
 }) {
+  const normalizedRoster =
+    roster.length > 0
+      ? roster
+      : [
+          {
+            id: turn.speakerId,
+            name: turn.speakerName,
+            model: turn.model,
+            persona: turn.persona,
+          },
+        ];
+  const speakerIndex = Math.max(
+    normalizedRoster.findIndex((participant) => participant.id === turn.speakerId),
+    0,
+  );
+  const speakerPosition = seatPosition(speakerIndex, normalizedRoster.length);
+  const placement = bubblePlacement(speakerPosition);
+  const bubbles = turn.bubbles.length > 0 ? turn.bubbles : [{ id: `${turn.id}-fallback`, content: turn.content }];
+
   return (
-    <article className="glass-panel rounded-[1.35rem] p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-[color:var(--line)] pb-3">
+    <article className="glass-panel rounded-[1.8rem] p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">{turn.kind.replace(/_/g, " ")}</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">{kindLabel(turn.kind)}</p>
           <h4 className="mt-1 text-lg font-semibold">{turn.speakerName}</h4>
         </div>
-        <div className="text-right text-sm text-[color:var(--muted)]">
-          <p className="mono">{turn.model}</p>
-          {turn.round ? <p>Round {turn.round}</p> : null}
+        <div className="flex flex-wrap items-center justify-end gap-2 text-right text-sm text-[color:var(--muted)]">
+          {turn.round ? (
+            <span className="rounded-full border border-[color:var(--line)] px-3 py-1 text-xs uppercase tracking-[0.16em]">
+              Round {turn.round}
+            </span>
+          ) : null}
+          <span className="rounded-full border border-[color:var(--line)] px-3 py-1 text-xs mono">
+            {turn.model}
+          </span>
         </div>
       </div>
-      <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">{turn.persona}</p>
-      <pre className="mt-4 whitespace-pre-wrap text-sm leading-7 text-[color:var(--ink-soft)]">
-        {turn.content}
-      </pre>
+
+      <div className="council-scene mt-5">
+        <div className="council-table-shadow" />
+        <div className="council-table">
+          <div className="council-table-inner" />
+        </div>
+
+        {normalizedRoster.map((participant, index) => {
+          const position = seatPosition(index, normalizedRoster.length);
+          const isSpeaker = participant.id === turn.speakerId;
+
+          return (
+            <div
+              key={participant.id}
+              className={`bot-seat ${isSpeaker ? "is-speaking" : ""}`}
+              style={{
+                left: `${position.left}%`,
+                top: `${position.top}%`,
+              }}
+            >
+              <div className="bot-avatar" aria-hidden="true">
+                <span className="bot-eye bot-eye-left" />
+                <span className="bot-eye bot-eye-right" />
+                <span className="bot-mouth" />
+              </div>
+              <div className="bot-seat-label">
+                <span>{participant.name}</span>
+                {isSpeaker ? <span className="bot-seat-status">speaking</span> : null}
+              </div>
+            </div>
+          );
+        })}
+
+        <div className={`balloon-stack ${placement.className}`} style={placement.style}>
+          {bubbles.map((bubble, index) => (
+            <div
+              key={bubble.id}
+              className={`speech-balloon ${index === bubbles.length - 1 ? "speech-balloon-last" : ""}`}
+            >
+              <p>{bubble.content}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <p className="mt-4 text-sm leading-6 text-[color:var(--muted)]">{turn.persona}</p>
     </article>
   );
 }
@@ -158,17 +277,19 @@ function DebateView({
   opening,
   rounds,
   synthesis,
+  roster,
 }: {
   opening?: CouncilTurn;
   rounds?: DebateRound[];
   synthesis?: CouncilTurn;
+  roster: ParticipantConfig[];
 }) {
   return (
     <div className="space-y-6">
       {opening ? (
         <section className="space-y-3">
           <h3 className="text-lg font-semibold">Coordinator Opening</h3>
-          <TurnCard turn={opening} />
+          <TurnScene turn={opening} roster={roster} />
         </section>
       ) : null}
 
@@ -177,7 +298,7 @@ function DebateView({
           <h3 className="text-lg font-semibold">Round {round.round}</h3>
           <div className="grid gap-4">
             {round.turns.map((turn) => (
-              <TurnCard key={turn.id} turn={turn} />
+              <TurnScene key={turn.id} turn={turn} roster={roster} />
             ))}
           </div>
         </section>
@@ -186,7 +307,7 @@ function DebateView({
       {synthesis ? (
         <section className="space-y-3">
           <h3 className="text-lg font-semibold">Final Synthesis</h3>
-          <TurnCard turn={synthesis} />
+          <TurnScene turn={synthesis} roster={roster} />
         </section>
       ) : null}
     </div>
@@ -197,10 +318,12 @@ function CouncilView({
   councilResponses,
   consensus,
   pendingMembers,
+  roster,
 }: {
   councilResponses?: CouncilTurn[];
   consensus?: CouncilTurn;
   pendingMembers?: string[];
+  roster: ParticipantConfig[];
 }) {
   return (
     <div className="space-y-6">
@@ -212,14 +335,14 @@ function CouncilView({
           </div>
         ) : null}
         <div className="grid gap-4">
-          {councilResponses?.map((turn) => <TurnCard key={turn.id} turn={turn} />)}
+          {councilResponses?.map((turn) => <TurnScene key={turn.id} turn={turn} roster={roster} />)}
         </div>
       </section>
 
       {consensus ? (
         <section className="space-y-3">
           <h3 className="text-lg font-semibold">Coordinator Consensus</h3>
-          <TurnCard turn={consensus} />
+          <TurnScene turn={consensus} roster={roster} />
         </section>
       ) : null}
     </div>
@@ -301,6 +424,7 @@ export function CouncilStudio() {
     setResult({
       mode: config.mode,
       prompt: config.prompt,
+      roster: createRosterSnapshot(config),
       rounds: config.mode === "debate" ? [] : undefined,
       councilResponses: config.mode === "council" ? [] : undefined,
       usage: emptyUsage(),
@@ -417,12 +541,12 @@ export function CouncilStudio() {
                 Vercel + OpenRouter
               </p>
               <h1 className="balance-text mt-4 max-w-3xl text-4xl font-semibold tracking-[-0.04em] text-[color:var(--foreground)] sm:text-5xl">
-                Run a coordinator-led LLM debate or parallel council consensus.
+                Stage a room full of bots and watch the conversation unfold around the table.
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-[color:var(--ink-soft)] sm:text-lg">
                 Configure a coordinator, pick any number of OpenRouter-backed members, assign each a persona,
-                and route the same prompt through either sequential debate rounds or a parallel council pass that
-                resolves into an equitable middle ground.
+                and route the same prompt through either sequential debate rounds or a parallel council pass. Each
+                response is requested as conversational beats, then rendered as speech balloons in the chamber.
               </p>
             </div>
 
@@ -629,8 +753,8 @@ export function CouncilStudio() {
               <h2 className="mt-1 text-2xl font-semibold">Council output</h2>
               <p className="mt-3 text-sm leading-6 text-[color:var(--ink-soft)]">
                 Debate mode runs a coordinator opening, sequential member turns, and a final synthesis. Council
-                mode collects independent responses in parallel and asks the coordinator for a consensus that
-                reflects the average view fairly.
+                mode collects independent responses in parallel and asks the coordinator for a consensus, all in
+                short spoken beats that are split into balloons with a hidden delimiter.
               </p>
             </section>
 
@@ -663,12 +787,18 @@ export function CouncilStudio() {
 
             {result ? (
               result.mode === "debate" ? (
-                <DebateView opening={result.opening} rounds={result.rounds} synthesis={result.synthesis} />
+                <DebateView
+                  opening={result.opening}
+                  rounds={result.rounds}
+                  synthesis={result.synthesis}
+                  roster={result.roster}
+                />
               ) : (
                 <CouncilView
                   councilResponses={result.councilResponses}
                   consensus={result.consensus}
                   pendingMembers={pendingCouncilMembers}
+                  roster={result.roster}
                 />
               )
             ) : (
@@ -678,7 +808,7 @@ export function CouncilStudio() {
                 </p>
                 <p className="mt-3 text-sm leading-6 text-[color:var(--ink-soft)]">
                   Add your prompt, choose the coordinator and member models, set each persona, and run the
-                  workflow. You will see the transcript or consensus appear here.
+                  workflow. You will see the chamber populate with bot seats and speech balloons here.
                 </p>
               </section>
             )}

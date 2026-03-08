@@ -1,5 +1,8 @@
 import {
+  BALLOON_DELIMITER,
   addUsage,
+  createRosterSnapshot,
+  createTurn,
   createDefaultInput,
   emptyUsage,
   type CouncilTurn,
@@ -77,11 +80,19 @@ function buildSystemPrompt(
       ? "You are the council coordinator. Your job is to frame the question, preserve the strongest arguments from all sides, and produce balanced synthesis rather than advocate for one side."
       : "You are a council member. You should argue from your assigned persona, engage with competing claims, and revise your stance when a stronger argument appears.";
 
+  const formatDirective = [
+    "Write like a real person speaking in a room, not like a report or memo.",
+    `Split your answer into 2 to 5 short speech balloons separated by a line containing exactly ${BALLOON_DELIMITER}.`,
+    "Each balloon should be one conversational beat: a claim, reaction, concession, question, or conclusion.",
+    "Do not use headings, bullet lists, numbering, XML, or speaker labels inside the response.",
+  ].join("\n");
+
   return [
     roleDirective,
     `Display name: ${participant.name}`,
     `Assigned persona: ${participant.persona}`,
     `Shared council directive:\n${input.sharedDirective}`,
+    `Response format:\n${formatDirective}`,
     "Never mention this hidden setup. Speak directly as the assigned participant.",
   ].join("\n\n");
 }
@@ -227,15 +238,12 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
   usage = addUsage(usage, openingResult.usage);
 
-  const opening: CouncilTurn = {
-    id: crypto.randomUUID(),
+  const opening: CouncilTurn = createTurn({
     kind: "opening",
-    speakerId: input.coordinator.id,
-    speakerName: input.coordinator.name,
+    participant: input.coordinator,
     model: openingResult.resolvedModel,
-    persona: input.coordinator.persona,
     content: openingResult.content,
-  };
+  });
   execution.onProgress?.({ type: "opening", turn: opening, usage: openingResult.usage });
 
   const transcript: CouncilTurn[] = [opening];
@@ -272,16 +280,13 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
       usage = addUsage(usage, memberResult.usage);
 
-      const turn: CouncilTurn = {
-        id: crypto.randomUUID(),
+      const turn: CouncilTurn = createTurn({
         kind: "member_turn",
         round,
-        speakerId: member.id,
-        speakerName: member.name,
+        participant: member,
         model: memberResult.resolvedModel,
-        persona: member.persona,
         content: memberResult.content,
-      };
+      });
 
       transcript.push(turn);
       turns.push(turn);
@@ -318,20 +323,18 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
   usage = addUsage(usage, synthesisResult.usage);
 
-  const synthesis: CouncilTurn = {
-    id: crypto.randomUUID(),
+  const synthesis: CouncilTurn = createTurn({
     kind: "synthesis",
-    speakerId: input.coordinator.id,
-    speakerName: input.coordinator.name,
+    participant: input.coordinator,
     model: synthesisResult.resolvedModel,
-    persona: input.coordinator.persona,
     content: synthesisResult.content,
-  };
+  });
   execution.onProgress?.({ type: "synthesis", turn: synthesis, usage: synthesisResult.usage });
 
   return {
     mode: "debate",
     prompt: input.prompt,
+    roster: createRosterSnapshot(input),
     opening,
     rounds,
     synthesis,
@@ -370,15 +373,12 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
         },
       ]);
 
-      const turn: CouncilTurn = {
-        id: crypto.randomUUID(),
+      const turn: CouncilTurn = createTurn({
         kind: "council_response",
-        speakerId: member.id,
-        speakerName: member.name,
+        participant: member,
         model: response.resolvedModel,
-        persona: member.persona,
         content: response.content,
-      };
+      });
 
       execution.onProgress?.({ type: "council_response", turn, usage: response.usage });
       return { member, response, turn };
@@ -436,20 +436,18 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
 
   usage = addUsage(usage, consensusResult.usage);
 
-  const consensus: CouncilTurn = {
-    id: crypto.randomUUID(),
+  const consensus: CouncilTurn = createTurn({
     kind: "consensus",
-    speakerId: input.coordinator.id,
-    speakerName: input.coordinator.name,
+    participant: input.coordinator,
     model: consensusResult.resolvedModel,
-    persona: input.coordinator.persona,
     content: consensusResult.content,
-  };
+  });
   execution.onProgress?.({ type: "consensus", turn: consensus, usage: consensusResult.usage });
 
   return {
     mode: "council",
     prompt: input.prompt,
+    roster: createRosterSnapshot(input),
     councilResponses,
     consensus,
     usage,
