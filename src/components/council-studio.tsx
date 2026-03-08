@@ -86,6 +86,10 @@ function frameDuration(content: string): number {
   return Math.min(4200, Math.max(1400, 900 + content.length * 22));
 }
 
+function bubbleRevealIncrement(content: string): number {
+  return Math.max(2, Math.ceil(content.length / 42));
+}
+
 function flattenTurns(result: RunResult | null): CouncilTurn[] {
   if (!result) {
     return [];
@@ -313,37 +317,59 @@ function ParticipantSettingsSheet({
 function ChamberStage({
   roster,
   currentFrame,
+  displayedBubbleContent,
   chapters,
   frames,
   activeFrameIndex,
   totalDurationMs,
   isRunning,
-  isPlaybackActive,
+  isBubbleStreaming,
+  queuedFrameIndex,
   statusMessage,
   error,
   warnings,
+  mode,
   prompt,
   hasRun,
+  hasLoadedKey,
+  hasApiKey,
+  onModeChange,
+  onPromptChange,
+  onAddMember,
+  onReset,
   onOpenParticipant,
   onSelectFrame,
-  onTogglePlayback,
+  onPreviousFrame,
+  onResetTimeline,
+  onAdvanceFrame,
 }: {
   roster: ParticipantConfig[];
   currentFrame?: PlaybackFrame;
+  displayedBubbleContent: string;
   chapters: TimelineChapter[];
   frames: PlaybackFrame[];
   activeFrameIndex: number;
   totalDurationMs: number;
   isRunning: boolean;
-  isPlaybackActive: boolean;
+  isBubbleStreaming: boolean;
+  queuedFrameIndex: number | null;
   statusMessage: string | null;
   error: string | null;
   warnings: string[];
+  mode: RunInput["mode"];
   prompt: string;
   hasRun: boolean;
+  hasLoadedKey: boolean;
+  hasApiKey: boolean;
+  onModeChange: (mode: RunInput["mode"]) => void;
+  onPromptChange: (value: string) => void;
+  onAddMember: () => void;
+  onReset: () => void;
   onOpenParticipant: (id: string) => void;
   onSelectFrame: (index: number) => void;
-  onTogglePlayback: () => void;
+  onPreviousFrame: () => void;
+  onResetTimeline: () => void;
+  onAdvanceFrame: () => void;
 }) {
   const speakingIndex = currentFrame
     ? Math.max(
@@ -392,12 +418,56 @@ function ChamberStage({
         </div>
       </div>
 
+      <div className="chamber-control-bar">
+        <label className="chamber-prompt-shell" htmlFor="council-prompt">
+          <span className="chamber-control-label">Prompt</span>
+          <input
+            id="council-prompt"
+            className="field chamber-prompt-input"
+            value={prompt}
+            onChange={(event) => onPromptChange(event.target.value)}
+            placeholder="What should the council deliberate?"
+          />
+        </label>
+
+        <div className="chamber-control-actions">
+          <div className="mode-toggle mode-toggle-compact">
+            {(["debate", "council"] as const).map((nextMode) => (
+              <button
+                key={nextMode}
+                type="button"
+                onClick={() => onModeChange(nextMode)}
+                className={`mode-toggle-button mode-toggle-button-compact ${mode === nextMode ? "is-selected" : ""}`}
+              >
+                {nextMode}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="submit"
+            disabled={isRunning || !hasLoadedKey || !hasApiKey}
+            className="action-button action-button-primary action-button-compact"
+          >
+            {isRunning ? "Running..." : `Run ${mode}`}
+          </button>
+
+          <button type="button" onClick={onAddMember} className="action-button action-button-compact">
+            Add member
+          </button>
+
+          <button type="button" onClick={onReset} className="action-button action-button-compact">
+            Reset
+          </button>
+        </div>
+      </div>
+
       <div className="stage-frame">
         <div className="stage-header">
           <div>
             <p className="text-[11px] uppercase tracking-[0.24em] text-[color:var(--muted)]">Prompt</p>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[color:var(--foreground)]">
-              {prompt.trim() || "Set the prompt below, then run the council."}
+              {prompt.trim() || "Set the prompt above, then run the council."}
             </p>
           </div>
           <div className="stage-metadata">
@@ -459,7 +529,9 @@ function ChamberStage({
                   {currentFrame.speakerName}
                   <span>{kindLabel(currentFrame.kind)}</span>
                 </p>
-                <p className="stage-bubble-copy">{currentFrame.bubbleContent}</p>
+                <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
+                  {displayedBubbleContent || "\u00a0"}
+                </p>
               </article>
             ) : (
               <article className="stage-bubble-card stage-bubble-card-muted">
@@ -491,27 +563,27 @@ function ChamberStage({
           <div className="timeline-controls">
             <button
               type="button"
-              onClick={() => onSelectFrame(Math.max(activeFrameIndex - 1, 0))}
-              disabled={isRunning || frames.length < 2 || activeFrameIndex === 0}
+              onClick={onPreviousFrame}
+              disabled={frames.length === 0 || activeFrameIndex === 0}
               className="timeline-button"
             >
               Prev
             </button>
             <button
               type="button"
-              onClick={onTogglePlayback}
-              disabled={frames.length === 0 || isRunning}
+              onClick={onResetTimeline}
+              disabled={frames.length === 0 || activeFrameIndex === 0}
               className="timeline-button timeline-button-primary"
             >
-              {isPlaybackActive ? "Pause" : activeFrameIndex >= frames.length - 1 ? "Replay" : "Play"}
+              Restart
             </button>
             <button
               type="button"
-              onClick={() => onSelectFrame(Math.min(activeFrameIndex + 1, Math.max(frames.length - 1, 0)))}
-              disabled={isRunning || frames.length < 2 || activeFrameIndex >= frames.length - 1}
+              onClick={onAdvanceFrame}
+              disabled={!currentFrame && !isRunning}
               className="timeline-button"
             >
-              Next
+              {queuedFrameIndex !== null && !isBubbleStreaming ? "Waiting..." : isBubbleStreaming ? "Finish" : "Next"}
             </button>
             <div className="timeline-clock mono">
               <span>{formatClock(currentTimeMs)}</span>
@@ -532,7 +604,7 @@ function ChamberStage({
                       totalDurationMs > 0 ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%` : "0%",
                   }}
                   onClick={() => onSelectFrame(chapter.frameIndex)}
-                  disabled={frames.length === 0 || isRunning}
+                  disabled={frames.length === 0}
                   title={chapter.label}
                 />
               ))}
@@ -543,14 +615,20 @@ function ChamberStage({
               max={Math.max(frames.length - 1, 0)}
               value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
               onChange={(event) => onSelectFrame(Number(event.target.value))}
-              disabled={frames.length < 2 || isRunning}
+              disabled={frames.length < 2}
               className="timeline-slider"
               aria-label="Playback timeline"
             />
           </div>
 
           <div className="timeline-caption">
-            <span>{isRunning ? "Timeline fills live as the debate lands." : "Scrub any beat once the run is complete."}</span>
+            <span>
+              {queuedFrameIndex !== null
+                ? "The next bubble is queued and will open as soon as that response lands."
+                : isRunning
+                  ? "Space or Next advances manually while the council keeps generating in the background."
+                  : "Space or Next advances one bubble at a time."}
+            </span>
             {currentChapter ? <span>{currentChapter.label}</span> : null}
           </div>
         </div>
@@ -577,7 +655,10 @@ export function CouncilStudio() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [activeFrameIndex, setActiveFrameIndex] = useState(0);
-  const [isPlaybackActive, setIsPlaybackActive] = useState(false);
+  const [completedBubbleIds, setCompletedBubbleIds] = useState<Record<string, true>>({});
+  const [revealedBubbleId, setRevealedBubbleId] = useState<string | null>(null);
+  const [revealedBubbleChars, setRevealedBubbleChars] = useState(0);
+  const [queuedFrameIndex, setQueuedFrameIndex] = useState<number | null>(null);
 
   const roster = [config.coordinator, ...config.members];
   const usage = result?.usage ?? emptyUsage();
@@ -588,6 +669,11 @@ export function CouncilStudio() {
   const totalDurationMs = timeline.totalDurationMs;
   const currentFrame = frames[Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))];
   const editableParticipant = roster.find((participant) => participant.id === activeEditorId) ?? null;
+  const isBubbleStreaming =
+    Boolean(currentFrame) && revealedBubbleChars < (currentFrame?.bubbleContent.length ?? 0);
+  const displayedBubbleContent = currentFrame
+    ? currentFrame.bubbleContent.slice(0, Math.min(revealedBubbleChars, currentFrame.bubbleContent.length))
+    : "";
 
   useEffect(() => {
     const storedKey = window.localStorage.getItem(OPENROUTER_KEY_STORAGE)?.trim() ?? "";
@@ -612,32 +698,62 @@ export function CouncilStudio() {
       if (activeFrameIndex !== 0) {
         setActiveFrameIndex(0);
       }
+      if (queuedFrameIndex !== null) {
+        setQueuedFrameIndex(null);
+      }
       return;
     }
 
     if (activeFrameIndex > frames.length - 1) {
       setActiveFrameIndex(frames.length - 1);
     }
-  }, [activeFrameIndex, frames.length]);
+  }, [activeFrameIndex, frames.length, queuedFrameIndex]);
 
   useEffect(() => {
-    if (!isRunning && isPlaybackActive && frames.length > 0 && activeFrameIndex >= frames.length - 1) {
-      setIsPlaybackActive(false);
+    if (!currentFrame) {
+      if (revealedBubbleId !== null || revealedBubbleChars !== 0) {
+        setRevealedBubbleId(null);
+        setRevealedBubbleChars(0);
+      }
+      return;
     }
-  }, [activeFrameIndex, frames.length, isPlaybackActive, isRunning]);
+
+    if (revealedBubbleId !== currentFrame.id) {
+      setRevealedBubbleId(currentFrame.id);
+      setRevealedBubbleChars(completedBubbleIds[currentFrame.id] ? currentFrame.bubbleContent.length : 0);
+    }
+  }, [completedBubbleIds, currentFrame, revealedBubbleChars, revealedBubbleId]);
 
   useEffect(() => {
-    const shouldAdvance = isRunning || isPlaybackActive;
-    if (!shouldAdvance || frames.length === 0 || activeFrameIndex >= frames.length - 1) {
+    if (!currentFrame || revealedBubbleChars < currentFrame.bubbleContent.length || completedBubbleIds[currentFrame.id]) {
+      return;
+    }
+
+    setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
+  }, [completedBubbleIds, currentFrame, revealedBubbleChars]);
+
+  useEffect(() => {
+    if (!currentFrame || revealedBubbleId !== currentFrame.id) {
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
-      setActiveFrameIndex((current) => Math.min(current + 1, frames.length - 1));
-    }, frames[activeFrameIndex]?.durationMs ?? 1600);
+      setRevealedBubbleChars((current) =>
+        Math.min(current + bubbleRevealIncrement(currentFrame.bubbleContent), currentFrame.bubbleContent.length),
+      );
+    }, 18);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeFrameIndex, frames, isPlaybackActive, isRunning]);
+  }, [currentFrame, revealedBubbleChars, revealedBubbleId]);
+
+  useEffect(() => {
+    if (queuedFrameIndex === null || queuedFrameIndex >= frames.length) {
+      return;
+    }
+
+    setActiveFrameIndex(queuedFrameIndex);
+    setQueuedFrameIndex(null);
+  }, [frames.length, queuedFrameIndex]);
 
   function updateCoordinator(patch: Partial<ParticipantConfig>) {
     setConfig((current) => ({
@@ -687,23 +803,60 @@ export function CouncilStudio() {
 
   function selectFrame(index: number) {
     setActiveFrameIndex(index);
-    if (!isRunning) {
-      setIsPlaybackActive(false);
-    }
+    setQueuedFrameIndex(null);
   }
 
-  function togglePlayback() {
+  function resetTimeline() {
     if (frames.length === 0) {
       return;
     }
 
-    if (activeFrameIndex >= frames.length - 1) {
-      setActiveFrameIndex(0);
-      setIsPlaybackActive(true);
+    setActiveFrameIndex(0);
+    setQueuedFrameIndex(null);
+  }
+
+  function finishCurrentBubble() {
+    if (!currentFrame) {
       return;
     }
 
-    setIsPlaybackActive((current) => !current);
+    setRevealedBubbleId(currentFrame.id);
+    setRevealedBubbleChars(currentFrame.bubbleContent.length);
+    setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
+  }
+
+  function goToPreviousFrame() {
+    if (activeFrameIndex === 0) {
+      return;
+    }
+
+    setQueuedFrameIndex(null);
+    setActiveFrameIndex((current) => Math.max(current - 1, 0));
+  }
+
+  function advanceFrame() {
+    if (currentFrame && revealedBubbleChars < currentFrame.bubbleContent.length) {
+      finishCurrentBubble();
+      return;
+    }
+
+    if (frames.length === 0) {
+      if (isRunning) {
+        setQueuedFrameIndex(0);
+      }
+      return;
+    }
+
+    const nextIndex = activeFrameIndex + 1;
+    if (nextIndex < frames.length) {
+      setQueuedFrameIndex(null);
+      setActiveFrameIndex(nextIndex);
+      return;
+    }
+
+    if (isRunning) {
+      setQueuedFrameIndex(nextIndex);
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -717,7 +870,10 @@ export function CouncilStudio() {
     setError(null);
     setStatusMessage("Preparing council run.");
     setActiveFrameIndex(0);
-    setIsPlaybackActive(true);
+    setCompletedBubbleIds({});
+    setQueuedFrameIndex(null);
+    setRevealedBubbleId(null);
+    setRevealedBubbleChars(0);
     setResult({
       mode: config.mode,
       prompt: config.prompt,
@@ -743,11 +899,67 @@ export function CouncilStudio() {
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "The council run failed.");
       setStatusMessage(null);
-      setIsPlaybackActive(false);
     } finally {
       setIsRunning(false);
     }
   }
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === " " || event.code === "Space" || event.key === "ArrowRight") {
+        event.preventDefault();
+
+        if (currentFrame && revealedBubbleChars < currentFrame.bubbleContent.length) {
+          setRevealedBubbleId(currentFrame.id);
+          setRevealedBubbleChars(currentFrame.bubbleContent.length);
+          setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
+          return;
+        }
+
+        if (frames.length === 0) {
+          if (isRunning) {
+            setQueuedFrameIndex(0);
+          }
+          return;
+        }
+
+        const nextIndex = activeFrameIndex + 1;
+        if (nextIndex < frames.length) {
+          setQueuedFrameIndex(null);
+          setActiveFrameIndex(nextIndex);
+          return;
+        }
+
+        if (isRunning) {
+          setQueuedFrameIndex(nextIndex);
+        }
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        if (activeFrameIndex === 0) {
+          return;
+        }
+
+        setQueuedFrameIndex(null);
+        setActiveFrameIndex((current) => Math.max(current - 1, 0));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeFrameIndex, currentFrame, frames.length, isRunning, revealedBubbleChars]);
 
   function applyProgressEvent(event: RunProgressEvent) {
     if (event.type === "status") {
@@ -816,32 +1028,53 @@ export function CouncilStudio() {
         ))}
       </datalist>
 
-      <div className="mx-auto flex w-full max-w-[96rem] flex-col gap-8 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-[96rem] flex-col gap-8 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
         <ChamberStage
           roster={roster}
           currentFrame={currentFrame}
+          displayedBubbleContent={displayedBubbleContent}
           chapters={chapters}
           frames={frames}
           activeFrameIndex={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
           totalDurationMs={totalDurationMs}
           isRunning={isRunning}
-          isPlaybackActive={isPlaybackActive}
+          isBubbleStreaming={isBubbleStreaming}
+          queuedFrameIndex={queuedFrameIndex}
           statusMessage={statusMessage}
           error={error}
           warnings={result?.warnings ?? []}
+          mode={config.mode}
           prompt={config.prompt}
           hasRun={Boolean(result)}
+          hasLoadedKey={hasLoadedKey}
+          hasApiKey={hasApiKey}
+          onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
+          onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
+          onAddMember={addMember}
+          onReset={() => {
+            setConfig(createDefaultInput());
+            setResult(null);
+            setError(null);
+            setStatusMessage(null);
+            setActiveFrameIndex(0);
+            setCompletedBubbleIds({});
+            setQueuedFrameIndex(null);
+            setRevealedBubbleId(null);
+            setRevealedBubbleChars(0);
+          }}
           onOpenParticipant={openParticipantEditor}
           onSelectFrame={selectFrame}
-          onTogglePlayback={togglePlayback}
+          onPreviousFrame={goToPreviousFrame}
+          onResetTimeline={resetTimeline}
+          onAdvanceFrame={advanceFrame}
         />
 
-        <form onSubmit={handleSubmit} className="director-dock">
+        <section className="director-dock">
           <div className="director-bar">
             <div className="director-copy">
               <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Director Dock</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[color:var(--foreground)]">
-                Keep setup lean. Tune the room only when needed.
+                Tune the room only when needed.
               </h2>
             </div>
 
@@ -861,94 +1094,6 @@ export function CouncilStudio() {
                 <strong>{usage.totalTokens.toLocaleString()}</strong>
               </div>
             </div>
-          </div>
-
-          <div className="director-grid">
-            <section className="director-panel director-panel-main">
-              <FieldShell label="Prompt" hint="This is the single question the whole room is responding to.">
-                <textarea
-                  className="field min-h-36 resize-y"
-                  value={config.prompt}
-                  onChange={(event) => setConfig((current) => ({ ...current, prompt: event.target.value }))}
-                  placeholder="What should the council deliberate?"
-                />
-              </FieldShell>
-
-              <div className="mt-5 flex flex-wrap gap-3">
-                <div className="mode-toggle">
-                  {(["debate", "council"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setConfig((current) => ({ ...current, mode }))}
-                      className={`mode-toggle-button ${config.mode === mode ? "is-selected" : ""}`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isRunning || !hasLoadedKey || !hasApiKey}
-                  className="action-button action-button-primary"
-                >
-                  {isRunning ? "Running live..." : `Run ${config.mode}`}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={addMember}
-                  className="action-button"
-                >
-                  Add member
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfig(createDefaultInput());
-                    setResult(null);
-                    setError(null);
-                    setStatusMessage(null);
-                    setActiveFrameIndex(0);
-                    setIsPlaybackActive(false);
-                  }}
-                  className="action-button"
-                >
-                  Reset
-                </button>
-              </div>
-            </section>
-
-            <section className="director-panel">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Seats</p>
-                  <h3 className="mt-1 text-lg font-semibold text-[color:var(--foreground)]">Open settings per member</h3>
-                </div>
-              </div>
-
-              <div className="member-grid">
-                {roster.map((participant, index) => (
-                  <button
-                    key={participant.id}
-                    type="button"
-                    onClick={() => openParticipantEditor(participant.id)}
-                    className="member-card"
-                  >
-                    <div className="member-card-top">
-                      <span className="member-role">{index === 0 ? "Coordinator" : `Member ${index}`}</span>
-                      <span className="member-settings-inline">
-                        <SettingsGlyph />
-                      </span>
-                    </div>
-                    <strong className="member-name">{participant.name}</strong>
-                    <span className="member-model mono">{participant.model}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
           </div>
 
           <details className="director-panel director-details">
@@ -1020,8 +1165,8 @@ export function CouncilStudio() {
               </div>
             </div>
           </details>
-        </form>
-      </div>
+        </section>
+      </form>
 
       {hasLoadedKey && showKeyPrompt ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(6,9,12,0.6)] p-4 backdrop-blur-sm">
