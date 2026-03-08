@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   MODEL_SUGGESTIONS,
   createDefaultInput,
@@ -12,6 +12,17 @@ import {
   type RunInput,
   type RunResult,
 } from "@/lib/council";
+import { runCouncilWorkflow } from "@/lib/council-engine";
+
+const OPENROUTER_KEY_STORAGE = "llmcouncil.openrouter.key";
+
+function maskApiKey(value: string): string {
+  if (value.length <= 10) {
+    return "Saved";
+  }
+
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
 
 function FieldShell({
   label,
@@ -213,8 +224,25 @@ export function CouncilStudio() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [draftApiKey, setDraftApiKey] = useState("");
+  const [hasLoadedKey, setHasLoadedKey] = useState(false);
+  const [showKeyPrompt, setShowKeyPrompt] = useState(false);
 
   const usage = result?.usage ?? emptyUsage();
+  const hasApiKey = apiKey.trim().length > 0;
+
+  useEffect(() => {
+    const storedKey = window.localStorage.getItem(OPENROUTER_KEY_STORAGE)?.trim() ?? "";
+    if (storedKey) {
+      setApiKey(storedKey);
+      setDraftApiKey(storedKey);
+      setShowKeyPrompt(false);
+    } else {
+      setShowKeyPrompt(true);
+    }
+    setHasLoadedKey(true);
+  }, []);
 
   function updateCoordinator(patch: Partial<ParticipantConfig>) {
     setConfig((current) => ({
@@ -246,24 +274,21 @@ export function CouncilStudio() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!hasApiKey) {
+      setShowKeyPrompt(true);
+      setError("Enter your OpenRouter API key before running the council.");
+      return;
+    }
+
     setError(null);
     setResult(null);
     setIsRunning(true);
 
     try {
-      const response = await fetch("/api/run", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(config),
+      const payload = await runCouncilWorkflow(config, {
+        apiKey,
+        siteUrl: window.location.origin,
       });
-
-      const payload = (await response.json()) as RunResult & { error?: string };
-
-      if (!response.ok) {
-        throw new Error(payload.error || "The council run failed.");
-      }
 
       setResult(payload);
     } catch (submissionError) {
@@ -271,6 +296,20 @@ export function CouncilStudio() {
     } finally {
       setIsRunning(false);
     }
+  }
+
+  function saveApiKey() {
+    const trimmed = draftApiKey.trim();
+    if (!trimmed) {
+      setError("OpenRouter API key is required before running the council.");
+      return;
+    }
+
+    window.localStorage.setItem(OPENROUTER_KEY_STORAGE, trimmed);
+    setApiKey(trimmed);
+    setDraftApiKey(trimmed);
+    setShowKeyPrompt(false);
+    setError(null);
   }
 
   return (
@@ -299,10 +338,26 @@ export function CouncilStudio() {
               </p>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-              <UsageBadge label="Prompt Tokens" value={usage.promptTokens} />
-              <UsageBadge label="Completion Tokens" value={usage.completionTokens} />
-              <UsageBadge label="Total Tokens" value={usage.totalTokens} />
+            <div className="grid gap-4">
+              <div className="glass-panel rounded-2xl px-4 py-4">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-[color:var(--muted)]">OpenRouter Key</p>
+                <p className="mono mt-2 text-sm text-[color:var(--foreground)]">
+                  {hasApiKey ? maskApiKey(apiKey) : "Required"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyPrompt(true)}
+                  className="mt-3 rounded-full border border-[color:var(--line)] px-3 py-1.5 text-sm text-[color:var(--muted)] transition hover:border-[color:var(--accent)] hover:text-[color:var(--accent-strong)]"
+                >
+                  {hasApiKey ? "Change key" : "Add key"}
+                </button>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+                <UsageBadge label="Prompt Tokens" value={usage.promptTokens} />
+                <UsageBadge label="Completion Tokens" value={usage.completionTokens} />
+                <UsageBadge label="Total Tokens" value={usage.totalTokens} />
+              </div>
             </div>
           </div>
         </section>
@@ -459,10 +514,10 @@ export function CouncilStudio() {
             <div className="flex flex-wrap gap-3">
               <button
                 type="submit"
-                disabled={isRunning}
+                disabled={isRunning || !hasLoadedKey || !hasApiKey}
                 className="rounded-full bg-[color:var(--accent-strong)] px-5 py-3 text-sm font-medium text-white transition hover:translate-y-[-1px] hover:bg-[color:var(--accent)] disabled:cursor-wait disabled:opacity-60"
               >
-                {isRunning ? "Running council..." : `Run ${config.mode}`}
+                {isRunning ? "Running council..." : hasApiKey ? `Run ${config.mode}` : "Add OpenRouter key"}
               </button>
               <button
                 type="button"
@@ -532,6 +587,56 @@ export function CouncilStudio() {
           </aside>
         </div>
       </div>
+
+      {hasLoadedKey && showKeyPrompt ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,28,26,0.42)] p-4 backdrop-blur-sm">
+          <section className="glass-panel-strong w-full max-w-xl rounded-[1.8rem] p-6">
+            <p className="text-sm font-medium uppercase tracking-[0.2em] text-[color:var(--muted)]">
+              OpenRouter Key Required
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold">Add your API key to start using the council</h2>
+            <p className="mt-3 text-sm leading-6 text-[color:var(--ink-soft)]">
+              The key is stored in this browser only and used for direct OpenRouter requests from the client. You
+              can change it later from the top panel.
+            </p>
+
+            <div className="mt-5">
+              <FieldShell label="OpenRouter API Key">
+                <input
+                  className="field mono"
+                  type="password"
+                  autoFocus
+                  value={draftApiKey}
+                  onChange={(event) => setDraftApiKey(event.target.value)}
+                  placeholder="sk-or-v1-..."
+                />
+              </FieldShell>
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={saveApiKey}
+                className="rounded-full bg-[color:var(--accent-strong)] px-5 py-3 text-sm font-medium text-white transition hover:translate-y-[-1px] hover:bg-[color:var(--accent)]"
+              >
+                Save key
+              </button>
+              {hasApiKey ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftApiKey(apiKey);
+                    setShowKeyPrompt(false);
+                  }}
+                  className="rounded-full border border-[color:var(--line)] px-5 py-3 text-sm font-medium text-[color:var(--muted)] transition hover:border-[color:var(--accent)] hover:text-[color:var(--accent-strong)]"
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -60,13 +60,10 @@ export interface RunResult {
 }
 
 export const MODEL_SUGGESTIONS = [
-  "openai/gpt-4o-mini",
-  "openai/gpt-4.1-mini",
-  "anthropic/claude-3.7-sonnet",
-  "google/gemini-2.0-flash-001",
-  "meta-llama/llama-3.3-70b-instruct",
-  "mistralai/mistral-large",
-  "qwen/qwen-2.5-72b-instruct",
+  "google/gemini-3.1-flash-lite-preview",
+  "x-ai/grok-4.1-fast",
+  "openai/gpt-5.4",
+  "qwen/qwen3.5-35b-a3b",
 ] as const;
 
 export const DEFAULT_SHARED_DIRECTIVE = `You are participating in an LLM council. Stay faithful to the assigned persona, reason explicitly, and be willing to update your view when another member makes a stronger point. Keep answers concrete, balanced, and focused on the user's prompt.`;
@@ -83,7 +80,7 @@ export function createCoordinator(): ParticipantConfig {
   return {
     id: makeId("coordinator"),
     name: "Coordinator",
-    model: "openai/gpt-4o-mini",
+    model: "openai/gpt-5.4",
     persona:
       "A measured facilitator who clarifies the question, tracks disagreement honestly, and synthesizes balanced conclusions.",
   };
@@ -93,7 +90,7 @@ export function createMember(index: number): ParticipantConfig {
   return {
     id: makeId(`member-${index}`),
     name: `Member ${index}`,
-    model: MODEL_SUGGESTIONS[index % MODEL_SUGGESTIONS.length] ?? "openai/gpt-4o-mini",
+    model: MODEL_SUGGESTIONS[(index - 1) % MODEL_SUGGESTIONS.length] ?? "openai/gpt-5.4",
     persona:
       index % 2 === 0
         ? "An analytical pragmatist who optimizes for tradeoffs, evidence, and practical execution."

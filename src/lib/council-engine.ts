@@ -9,6 +9,11 @@ import {
   type UsageSummary,
 } from "@/lib/council";
 
+export interface RunExecutionOptions {
+  apiKey: string;
+  siteUrl?: string;
+}
+
 type ChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -72,6 +77,10 @@ function buildSystemPrompt(
 }
 
 function resolveSiteUrl(): string | undefined {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+
   if (process.env.OPENROUTER_SITE_URL) {
     return process.env.OPENROUTER_SITE_URL;
   }
@@ -107,21 +116,16 @@ async function callOpenRouter(
   participant: ParticipantConfig,
   role: "coordinator" | "member",
   sessionId: string,
+  execution: RunExecutionOptions,
   messages: ChatMessage[],
 ): Promise<{ content: string; usage: UsageSummary; resolvedModel: string }> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is not set on the server.");
-  }
-
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${execution.apiKey}`,
     "Content-Type": "application/json",
-    "X-OpenRouter-Title": process.env.OPENROUTER_APP_NAME || "LLM Council",
+    "X-OpenRouter-Title": process.env.NEXT_PUBLIC_OPENROUTER_APP_NAME || "LLM Council",
   };
 
-  const siteUrl = resolveSiteUrl();
+  const siteUrl = execution.siteUrl || resolveSiteUrl();
   if (siteUrl) {
     headers["HTTP-Referer"] = siteUrl;
   }
@@ -179,12 +183,18 @@ async function callOpenRouter(
   };
 }
 
-async function runDebate(input: RunInput): Promise<RunResult> {
+async function runDebate(input: RunInput, execution: RunExecutionOptions): Promise<RunResult> {
   const sessionId = crypto.randomUUID();
   let usage = emptyUsage();
   const warnings: string[] = [];
 
-  const openingResult = await callOpenRouter(input, input.coordinator, "coordinator", sessionId, [
+  const openingResult = await callOpenRouter(
+    input,
+    input.coordinator,
+    "coordinator",
+    sessionId,
+    execution,
+    [
     {
       role: "user",
       content: [
@@ -198,7 +208,8 @@ async function runDebate(input: RunInput): Promise<RunResult> {
         "- Keep it concise and specific.",
       ].join("\n\n"),
     },
-  ]);
+    ],
+  );
 
   usage = addUsage(usage, openingResult.usage);
 
@@ -219,7 +230,7 @@ async function runDebate(input: RunInput): Promise<RunResult> {
     const turns: CouncilTurn[] = [];
 
     for (const member of input.members) {
-      const memberResult = await callOpenRouter(input, member, "member", sessionId, [
+      const memberResult = await callOpenRouter(input, member, "member", sessionId, execution, [
         {
           role: "user",
           content: [
@@ -261,6 +272,7 @@ async function runDebate(input: RunInput): Promise<RunResult> {
     input.coordinator,
     "coordinator",
     sessionId,
+    execution,
     [
       {
         role: "user",
@@ -297,14 +309,14 @@ async function runDebate(input: RunInput): Promise<RunResult> {
   };
 }
 
-async function runCouncil(input: RunInput): Promise<RunResult> {
+async function runCouncil(input: RunInput, execution: RunExecutionOptions): Promise<RunResult> {
   const sessionId = crypto.randomUUID();
   let usage = emptyUsage();
   const warnings: string[] = [];
 
   const memberResults = await Promise.allSettled(
     input.members.map((member) =>
-      callOpenRouter(input, member, "member", sessionId, [
+      callOpenRouter(input, member, "member", sessionId, execution, [
         {
           role: "user",
           content: [
@@ -350,6 +362,7 @@ async function runCouncil(input: RunInput): Promise<RunResult> {
     input.coordinator,
     "coordinator",
     sessionId,
+    execution,
     [
       {
         role: "user",
@@ -388,12 +401,20 @@ async function runCouncil(input: RunInput): Promise<RunResult> {
   };
 }
 
-export async function runCouncilWorkflow(rawInput: unknown): Promise<RunResult> {
+export async function runCouncilWorkflow(
+  rawInput: unknown,
+  execution: RunExecutionOptions,
+): Promise<RunResult> {
   const input = rawInput ? (rawInput as RunInput) : createDefaultInput();
+  const apiKey = execution.apiKey.trim();
 
-  if (input.mode === "council") {
-    return runCouncil(input);
+  if (!apiKey) {
+    throw new Error("OpenRouter API key is required before running the council.");
   }
 
-  return runDebate(input);
+  if (input.mode === "council") {
+    return runCouncil(input, execution);
+  }
+
+  return runDebate(input, execution);
 }

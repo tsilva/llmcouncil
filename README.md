@@ -25,9 +25,7 @@ npm install
 cp .env.example .env.local
 ```
 
-3. Set `OPENROUTER_API_KEY` in `.env.local`.
-
-4. Start the app.
+3. Start the app.
 
 ```bash
 npm run dev
@@ -35,17 +33,17 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+On first load, the app prompts for an OpenRouter API key, stores it in browser local storage, and blocks runs until it is set. You can change it later from the main screen.
+
 ## Environment variables
 
-- `OPENROUTER_API_KEY`: required for server-side OpenRouter requests.
-- `OPENROUTER_APP_NAME`: optional header used for OpenRouter attribution.
-- `OPENROUTER_SITE_URL`: optional header used for OpenRouter attribution in local or self-hosted setups.
+- `NEXT_PUBLIC_OPENROUTER_APP_NAME`: optional OpenRouter attribution title for client-side requests.
 
 ## Deploy to Vercel
 
 This app is a standard Next.js App Router project, so Vercel can deploy it without extra adapters.
 
-1. Add the same environment variables in the Vercel project settings.
+1. No backend secret is required. The app uses a user-provided OpenRouter key stored in the browser.
 2. Deploy a preview:
 
 ```bash
@@ -60,6 +58,6 @@ vercel deploy --prod -y
 
 ## Notes
 
-- OpenRouter requests are made on the server through `src/app/api/run/route.ts`.
+- OpenRouter requests are made directly from the client.
 - The UI is implemented in `src/components/council-studio.tsx`.
 - The orchestration logic lives in `src/lib/council-engine.ts`.
