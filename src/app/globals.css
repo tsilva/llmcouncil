@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4efe4;
+  --foreground: #1f1c1a;
+  --muted: #6f665d;
+  --panel: rgba(255, 250, 243, 0.72);
+  --panel-strong: rgba(255, 248, 237, 0.88);
+  --line: rgba(50, 38, 29, 0.12);
+  --accent: #9d4d2d;
+  --accent-strong: #6b2816;
+  --ink-soft: #3d342f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(255, 213, 166, 0.8), transparent 28%),
+    radial-gradient(circle at top right, rgba(187, 223, 255, 0.65), transparent 24%),
+    linear-gradient(180deg, #f8f3eb 0%, #efe5d4 100%);
+}
+
+body {
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-display), sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(157, 77, 45, 0.18);
+}
+
+.glass-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow:
+    0 20px 50px rgba(100, 68, 49, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(18px);
+}
+
+.glass-panel-strong {
+  background: var(--panel-strong);
+  border: 1px solid rgba(50, 38, 29, 0.16);
+  box-shadow:
+    0 24px 64px rgba(84, 58, 39, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(22px);
+}
+
+.field {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid rgba(50, 38, 29, 0.14);
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--foreground);
+  padding: 0.9rem 1rem;
+  font-size: 0.98rem;
+  line-height: 1.5;
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.field:focus {
+  border-color: rgba(107, 40, 22, 0.38);
+  box-shadow: 0 0 0 4px rgba(157, 77, 45, 0.12);
+}
+
+.field::placeholder {
+  color: rgba(61, 52, 47, 0.58);
+}
+
+.label {
+  margin-bottom: 0.55rem;
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono), monospace;
+}
+
+.balance-text {
+  text-wrap: balance;
+}
