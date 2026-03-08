@@ -12,7 +12,17 @@ import {
 export interface RunExecutionOptions {
   apiKey: string;
   siteUrl?: string;
+  onProgress?: (event: RunProgressEvent) => void;
 }
+
+export type RunProgressEvent =
+  | { type: "status"; message: string }
+  | { type: "warning"; warning: string }
+  | { type: "opening"; turn: CouncilTurn; usage: UsageSummary }
+  | { type: "member_turn"; turn: CouncilTurn; usage: UsageSummary }
+  | { type: "council_response"; turn: CouncilTurn; usage: UsageSummary }
+  | { type: "synthesis"; turn: CouncilTurn; usage: UsageSummary }
+  | { type: "consensus"; turn: CouncilTurn; usage: UsageSummary };
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -187,6 +197,10 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
   const sessionId = crypto.randomUUID();
   let usage = emptyUsage();
   const warnings: string[] = [];
+  execution.onProgress?.({
+    type: "status",
+    message: `Coordinator ${input.coordinator.name} is framing the debate.`,
+  });
 
   const openingResult = await callOpenRouter(
     input,
@@ -222,14 +236,23 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
     persona: input.coordinator.persona,
     content: openingResult.content,
   };
+  execution.onProgress?.({ type: "opening", turn: opening, usage: openingResult.usage });
 
   const transcript: CouncilTurn[] = [opening];
   const rounds = [];
 
   for (let round = 1; round <= input.rounds; round += 1) {
     const turns: CouncilTurn[] = [];
+    execution.onProgress?.({
+      type: "status",
+      message: `Round ${round} of ${input.rounds} is in progress.`,
+    });
 
     for (const member of input.members) {
+      execution.onProgress?.({
+        type: "status",
+        message: `${member.name} is responding in round ${round}.`,
+      });
       const memberResult = await callOpenRouter(input, member, "member", sessionId, execution, [
         {
           role: "user",
@@ -262,11 +285,16 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
       transcript.push(turn);
       turns.push(turn);
+      execution.onProgress?.({ type: "member_turn", turn, usage: memberResult.usage });
     }
 
     rounds.push({ round, turns });
   }
 
+  execution.onProgress?.({
+    type: "status",
+    message: `Coordinator ${input.coordinator.name} is synthesizing the debate.`,
+  });
   const synthesisResult = await callOpenRouter(
     input,
     input.coordinator,
@@ -290,20 +318,23 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
   usage = addUsage(usage, synthesisResult.usage);
 
+  const synthesis: CouncilTurn = {
+    id: crypto.randomUUID(),
+    kind: "synthesis",
+    speakerId: input.coordinator.id,
+    speakerName: input.coordinator.name,
+    model: synthesisResult.resolvedModel,
+    persona: input.coordinator.persona,
+    content: synthesisResult.content,
+  };
+  execution.onProgress?.({ type: "synthesis", turn: synthesis, usage: synthesisResult.usage });
+
   return {
     mode: "debate",
     prompt: input.prompt,
     opening,
     rounds,
-    synthesis: {
-      id: crypto.randomUUID(),
-      kind: "synthesis",
-      speakerId: input.coordinator.id,
-      speakerName: input.coordinator.name,
-      model: synthesisResult.resolvedModel,
-      persona: input.coordinator.persona,
-      content: synthesisResult.content,
-    },
+    synthesis,
     usage,
     warnings,
   };
@@ -313,10 +344,19 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
   const sessionId = crypto.randomUUID();
   let usage = emptyUsage();
   const warnings: string[] = [];
+  execution.onProgress?.({
+    type: "status",
+    message: `Running ${input.members.length} council member responses in parallel.`,
+  });
 
   const memberResults = await Promise.allSettled(
-    input.members.map((member) =>
-      callOpenRouter(input, member, "member", sessionId, execution, [
+    input.members.map(async (member) => {
+      execution.onProgress?.({
+        type: "status",
+        message: `${member.name} is generating an independent response.`,
+      });
+
+      const response = await callOpenRouter(input, member, "member", sessionId, execution, [
         {
           role: "user",
           content: [
@@ -328,35 +368,48 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
             "- Do not try to form consensus yet.",
           ].join("\n\n"),
         },
-      ]),
-    ),
+      ]);
+
+      const turn: CouncilTurn = {
+        id: crypto.randomUUID(),
+        kind: "council_response",
+        speakerId: member.id,
+        speakerName: member.name,
+        model: response.resolvedModel,
+        persona: member.persona,
+        content: response.content,
+      };
+
+      execution.onProgress?.({ type: "council_response", turn, usage: response.usage });
+      return { member, response, turn };
+    }),
   );
 
   const councilResponses: CouncilTurn[] = [];
 
   memberResults.forEach((result, index) => {
-    const member = input.members[index];
     if (result.status === "fulfilled") {
-      usage = addUsage(usage, result.value.usage);
-      councilResponses.push({
-        id: crypto.randomUUID(),
-        kind: "council_response",
-        speakerId: member.id,
-        speakerName: member.name,
-        model: result.value.resolvedModel,
-        persona: member.persona,
-        content: result.value.content,
-      });
+      usage = addUsage(usage, result.value.response.usage);
+      councilResponses.push(result.value.turn);
       return;
     }
 
+    const member = input.members[index];
     warnings.push(`${member.name} failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    execution.onProgress?.({
+      type: "warning",
+      warning: warnings[warnings.length - 1] ?? `${member.name} failed.`,
+    });
   });
 
   if (councilResponses.length === 0) {
     throw new Error("Every council member failed to respond.");
   }
 
+  execution.onProgress?.({
+    type: "status",
+    message: `Coordinator ${input.coordinator.name} is drafting a consensus.`,
+  });
   const consensusResult = await callOpenRouter(
     input,
     input.coordinator,
@@ -383,19 +436,22 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
 
   usage = addUsage(usage, consensusResult.usage);
 
+  const consensus: CouncilTurn = {
+    id: crypto.randomUUID(),
+    kind: "consensus",
+    speakerId: input.coordinator.id,
+    speakerName: input.coordinator.name,
+    model: consensusResult.resolvedModel,
+    persona: input.coordinator.persona,
+    content: consensusResult.content,
+  };
+  execution.onProgress?.({ type: "consensus", turn: consensus, usage: consensusResult.usage });
+
   return {
     mode: "council",
     prompt: input.prompt,
     councilResponses,
-    consensus: {
-      id: crypto.randomUUID(),
-      kind: "consensus",
-      speakerId: input.coordinator.id,
-      speakerName: input.coordinator.name,
-      model: consensusResult.resolvedModel,
-      persona: input.coordinator.persona,
-      content: consensusResult.content,
-    },
+    consensus,
     usage,
     warnings,
   };

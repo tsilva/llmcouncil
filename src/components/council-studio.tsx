@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import {
   MODEL_SUGGESTIONS,
+  addUsage,
   createDefaultInput,
   createMember,
   emptyUsage,
@@ -12,7 +13,7 @@ import {
   type RunInput,
   type RunResult,
 } from "@/lib/council";
-import { runCouncilWorkflow } from "@/lib/council-engine";
+import { runCouncilWorkflow, type RunProgressEvent } from "@/lib/council-engine";
 
 const OPENROUTER_KEY_STORAGE = "llmcouncil.openrouter.key";
 
@@ -195,14 +196,21 @@ function DebateView({
 function CouncilView({
   councilResponses,
   consensus,
+  pendingMembers,
 }: {
   councilResponses?: CouncilTurn[];
   consensus?: CouncilTurn;
+  pendingMembers?: string[];
 }) {
   return (
     <div className="space-y-6">
       <section className="space-y-3">
         <h3 className="text-lg font-semibold">Independent Responses</h3>
+        {pendingMembers?.length ? (
+          <div className="glass-panel rounded-[1.2rem] px-4 py-3 text-sm text-[color:var(--muted)]">
+            Waiting for: {pendingMembers.join(", ")}
+          </div>
+        ) : null}
         <div className="grid gap-4">
           {councilResponses?.map((turn) => <TurnCard key={turn.id} turn={turn} />)}
         </div>
@@ -228,9 +236,17 @@ export function CouncilStudio() {
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showKeyPrompt, setShowKeyPrompt] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const usage = result?.usage ?? emptyUsage();
   const hasApiKey = apiKey.trim().length > 0;
+  const completedCouncilMembers = new Set(result?.councilResponses?.map((turn) => turn.speakerId) ?? []);
+  const pendingCouncilMembers =
+    isRunning && config.mode === "council"
+      ? config.members
+          .filter((member) => !completedCouncilMembers.has(member.id))
+          .map((member) => member.name)
+      : [];
 
   useEffect(() => {
     const storedKey = window.localStorage.getItem(OPENROUTER_KEY_STORAGE)?.trim() ?? "";
@@ -281,21 +297,93 @@ export function CouncilStudio() {
     }
 
     setError(null);
-    setResult(null);
+    setStatusMessage("Preparing council run.");
+    setResult({
+      mode: config.mode,
+      prompt: config.prompt,
+      rounds: config.mode === "debate" ? [] : undefined,
+      councilResponses: config.mode === "council" ? [] : undefined,
+      usage: emptyUsage(),
+      warnings: [],
+    });
     setIsRunning(true);
 
     try {
       const payload = await runCouncilWorkflow(config, {
         apiKey,
         siteUrl: window.location.origin,
+        onProgress: (event) => {
+          applyProgressEvent(event);
+        },
       });
 
       setResult(payload);
+      setStatusMessage(config.mode === "debate" ? "Debate complete." : "Council consensus complete.");
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "The council run failed.");
+      setStatusMessage(null);
     } finally {
       setIsRunning(false);
     }
+  }
+
+  function applyProgressEvent(event: RunProgressEvent) {
+    if (event.type === "status") {
+      setStatusMessage(event.message);
+      return;
+    }
+
+    if (event.type === "warning") {
+      setResult((current) =>
+        current
+          ? {
+              ...current,
+              warnings: [...current.warnings, event.warning],
+            }
+          : current,
+      );
+      return;
+    }
+
+    setResult((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const next = {
+        ...current,
+        usage: addUsage(current.usage, event.usage),
+      };
+
+      switch (event.type) {
+        case "opening":
+          return { ...next, opening: event.turn };
+        case "member_turn": {
+          const existingRounds = next.rounds ?? [];
+          const index = existingRounds.findIndex((round) => round.round === event.turn.round);
+          if (index >= 0) {
+            const updatedRounds = existingRounds.map((round, roundIndex) =>
+              roundIndex === index ? { ...round, turns: [...round.turns, event.turn] } : round,
+            );
+            return { ...next, rounds: updatedRounds };
+          }
+
+          return {
+            ...next,
+            rounds: [...existingRounds, { round: event.turn.round ?? 1, turns: [event.turn] }],
+          };
+        }
+        case "council_response":
+          return {
+            ...next,
+            councilResponses: [...(next.councilResponses ?? []), event.turn],
+          };
+        case "synthesis":
+          return { ...next, synthesis: event.turn };
+        case "consensus":
+          return { ...next, consensus: event.turn };
+      }
+    });
   }
 
   function saveApiKey() {
@@ -546,6 +634,15 @@ export function CouncilStudio() {
               </p>
             </section>
 
+            {statusMessage ? (
+              <section className="glass-panel rounded-[1.6rem] p-5">
+                <p className="text-sm font-medium uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                  Live Status
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[color:var(--ink-soft)]">{statusMessage}</p>
+              </section>
+            ) : null}
+
             {error ? (
               <section className="rounded-[1.6rem] border border-red-300/70 bg-red-50/90 p-5 text-red-900">
                 <p className="text-sm font-medium uppercase tracking-[0.2em]">Run Error</p>
@@ -571,6 +668,7 @@ export function CouncilStudio() {
                 <CouncilView
                   councilResponses={result.councilResponses}
                   consensus={result.consensus}
+                  pendingMembers={pendingCouncilMembers}
                 />
               )
             ) : (
