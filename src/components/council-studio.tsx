@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useDeferredValue, useEffect, useId, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   MODEL_SUGGESTIONS,
   addUsage,
@@ -14,6 +15,7 @@ import {
   type RunResult,
 } from "@/lib/council";
 import { runCouncilWorkflow, type RunProgressEvent } from "@/lib/council-engine";
+import { filterParticipantPersonaPresets } from "@/lib/persona-presets";
 
 const OPENROUTER_KEY_STORAGE = "llmcouncil.openrouter.key";
 
@@ -156,31 +158,18 @@ function buildPlaybackTimeline(result: RunResult | null): {
   };
 }
 
-function seatPosition(index: number, total: number): { left: number; top: number } {
-  const leftStart = total <= 4 ? 18 : 12;
-  const leftEnd = total <= 4 ? 82 : 88;
-  const progress = total <= 1 ? 0.5 : index / (total - 1);
+function participantInitials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
 
-  return {
-    left: leftStart + (leftEnd - leftStart) * progress,
-    top: total <= 4 ? 30 : 28,
-  };
-}
+  if (parts.length === 0) {
+    return "?";
+  }
 
-function bubblePlacement(position: { left: number; top: number }, total: number): {
-  className: string;
-  style: React.CSSProperties;
-} {
-  const bubbleTop = Math.min(position.top + (total <= 4 ? 18 : 16), 72);
-
-  return {
-    className: "stage-bubble-track",
-    style: {
-      left: `${position.left}%`,
-      top: `${bubbleTop}%`,
-      transform: "translate(-50%, 0)",
-    },
-  };
+  return parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
 }
 
 function FieldShell({
@@ -214,10 +203,44 @@ function SettingsGlyph() {
   );
 }
 
+function TranscriptGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 5.5h12M6 10.5h12M6 15.5h7" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.75h14A1.25 1.25 0 0 1 20.25 5v14A1.25 1.25 0 0 1 19 20.25H5A1.25 1.25 0 0 1 3.75 19V5A1.25 1.25 0 0 1 5 3.75Z" />
+    </svg>
+  );
+}
+
+function CloseGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7 7l10 10M17 7 7 17" />
+    </svg>
+  );
+}
+
+function BackGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+function PlusGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
 function ParticipantSettingsSheet({
   roleLabel,
   participant,
   modelListId,
+  showPersonaPresets,
   onChange,
   onClose,
   onRemove,
@@ -225,62 +248,148 @@ function ParticipantSettingsSheet({
   roleLabel: string;
   participant: ParticipantConfig;
   modelListId: string;
+  showPersonaPresets: boolean;
   onChange: (patch: Partial<ParticipantConfig>) => void;
   onClose: () => void;
   onRemove?: () => void;
 }) {
+  const [sheetView, setSheetView] = useState<"form" | "presets">("form");
+  const [personaPresetQuery, setPersonaPresetQuery] = useState("");
+  const deferredPersonaPresetQuery = useDeferredValue(personaPresetQuery);
+  const filteredPersonaPresets = filterParticipantPersonaPresets(deferredPersonaPresetQuery);
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-[rgba(6,9,12,0.54)] backdrop-blur-sm">
       <button type="button" className="flex-1 cursor-default" aria-label="Close member settings" onClick={onClose} />
       <aside className="settings-sheet w-full max-w-lg border-l border-[color:var(--line)] p-5 sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="flex items-start gap-3">
+            {sheetView === "presets" ? (
+              <button
+                type="button"
+                onClick={() => setSheetView("form")}
+                aria-label="Back to member form"
+                className="icon-circle-button"
+              >
+                <BackGlyph />
+              </button>
+            ) : null}
+
+            <div>
             <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{roleLabel}</p>
-            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">{participant.name}</h2>
+              <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">
+                {sheetView === "presets" ? "Choose a preset" : participant.name}
+              </h2>
+              {sheetView === "presets" ? (
+                <p className="mt-2 max-w-sm text-sm leading-6 text-[color:var(--ink-soft)]">
+                  Pick a predefined persona to populate the member form.
+                </p>
+              ) : null}
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full border border-[color:var(--line)] px-3 py-1.5 text-sm text-[color:var(--muted)] transition hover:border-[color:var(--accent)] hover:text-[color:var(--foreground)]"
+            aria-label="Close member settings"
+            className="icon-circle-button"
           >
-            Close
+            <CloseGlyph />
           </button>
         </div>
 
         <div className="mt-6 grid gap-5">
-          <FieldShell label="Name">
-            <input
-              className="field"
-              value={participant.name}
-              onChange={(event) => onChange({ name: event.target.value })}
-              placeholder="Council member name"
-            />
-          </FieldShell>
+          {sheetView === "presets" ? (
+            <>
+              <input
+                className="field"
+                value={personaPresetQuery}
+                onChange={(event) => setPersonaPresetQuery(event.target.value)}
+                placeholder="Search Portuguese politicians"
+              />
 
-          <FieldShell
-            label="Model"
-            hint="Pick a suggestion or enter any OpenRouter model id."
-          >
-            <input
-              className="field mono"
-              list={modelListId}
-              value={participant.model}
-              onChange={(event) => onChange({ model: event.target.value })}
-              placeholder="openai/gpt-5.4"
-            />
-          </FieldShell>
+              <div className="persona-preset-list" role="list" aria-label="Persona presets">
+                {filteredPersonaPresets.length > 0 ? (
+                  filteredPersonaPresets.map((preset) => {
+                    const isApplied = participant.name === preset.name && participant.persona === preset.persona;
 
-          <FieldShell label="Persona">
-            <textarea
-              className="field min-h-40 resize-y"
-              value={participant.persona}
-              onChange={(event) => onChange({ persona: event.target.value })}
-              placeholder="How should this participant think and argue?"
-            />
-          </FieldShell>
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className={`persona-preset-card ${isApplied ? "is-applied" : ""}`}
+                        onClick={() => {
+                          onChange({ name: preset.name, persona: preset.persona });
+                          setSheetView("form");
+                        }}
+                        aria-pressed={isApplied}
+                      >
+                        <span className="persona-preset-card-header">
+                          <span className="persona-preset-card-name">{preset.name}</span>
+                          <span className="persona-preset-card-language">{preset.language}</span>
+                        </span>
+                        <span className="persona-preset-card-title">{preset.title}</span>
+                        <span className="persona-preset-card-summary">{preset.summary}</span>
+                        <span className="persona-preset-card-cta">{isApplied ? "Applied" : "Apply preset"}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="persona-preset-empty">
+                    No presets match that search yet. Try a name, party, or ideology keyword.
+                  </div>
+                )}
+              </div>
+
+            </>
+          ) : (
+            <>
+              {showPersonaPresets ? (
+                <div className="participant-sheet-actions">
+                  <button
+                    type="button"
+                    onClick={() => setSheetView("presets")}
+                    className="action-button"
+                  >
+                    Presets
+                  </button>
+                </div>
+              ) : null}
+
+              <FieldShell label="Name">
+                <input
+                  className="field"
+                  value={participant.name}
+                  onChange={(event) => onChange({ name: event.target.value })}
+                  placeholder="Council member name"
+                />
+              </FieldShell>
+
+              <FieldShell
+                label="Model"
+                hint="Pick a suggestion or enter any OpenRouter model id."
+              >
+                <input
+                  className="field mono"
+                  list={modelListId}
+                  value={participant.model}
+                  onChange={(event) => onChange({ model: event.target.value })}
+                  placeholder="openai/gpt-5.4"
+                />
+              </FieldShell>
+
+              <FieldShell label="Persona">
+                <textarea
+                  className="field min-h-40 resize-y"
+                  value={participant.persona}
+                  onChange={(event) => onChange({ persona: event.target.value })}
+                  placeholder="How should this participant think and argue?"
+                />
+              </FieldShell>
+            </>
+          )}
         </div>
 
-        {onRemove ? (
+        {onRemove && sheetView === "form" ? (
           <div className="mt-6 border-t border-[color:var(--line)] pt-5">
             <button
               type="button"
@@ -294,6 +403,59 @@ function ParticipantSettingsSheet({
       </aside>
     </div>
   );
+}
+
+function transcriptTurnBody(turn: CouncilTurn): string {
+  const segments = turn.bubbles.length > 0 ? turn.bubbles.map((bubble) => bubble.content.trim()).filter(Boolean) : [turn.content];
+  return segments.join("\n\n");
+}
+
+function buildTranscriptMarkdown({
+  mode,
+  prompt,
+  turns,
+  isRunning,
+}: {
+  mode: RunInput["mode"];
+  prompt: string;
+  turns: CouncilTurn[];
+  isRunning: boolean;
+}): string {
+  const lines = [
+    `# ${mode === "debate" ? "Debate" : "Council"} Transcript`,
+    "",
+    "## Prompt",
+    "",
+    prompt.trim() || "_No prompt set yet._",
+  ];
+
+  if (turns.length === 0) {
+    lines.push(
+      "",
+      "## Live Feed",
+      "",
+      isRunning ? "_Waiting for the first response..._" : "_Run the council to generate a transcript._",
+    );
+
+    return lines.join("\n");
+  }
+
+  for (const turn of turns) {
+    lines.push(
+      "",
+      `## ${chapterLabelForTurn(turn)} · ${turn.speakerName}`,
+      "",
+      `*${turn.model}*`,
+      "",
+      transcriptTurnBody(turn),
+    );
+  }
+
+  if (isRunning) {
+    lines.push("", "_Transcript updates live as each turn completes._");
+  }
+
+  return lines.join("\n");
 }
 
 function StudioSettingsModal({
@@ -433,6 +595,75 @@ function StudioSettingsModal({
   );
 }
 
+function TranscriptSheet({
+  mode,
+  turnCount,
+  isRunning,
+  markdown,
+  onClose,
+}: {
+  mode: RunInput["mode"];
+  turnCount: number;
+  isRunning: boolean;
+  markdown: string;
+  onClose: () => void;
+}) {
+  const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const body = transcriptBodyRef.current;
+    if (!body) {
+      return;
+    }
+
+    body.scrollTop = body.scrollHeight;
+  }, [markdown]);
+
+  return (
+    <div className="fixed inset-0 z-[45] flex justify-end bg-[rgba(6,9,12,0.42)] backdrop-blur-sm">
+      <button type="button" className="flex-1 cursor-default" aria-label="Close transcript" onClick={onClose} />
+      <aside className="settings-sheet transcript-sheet w-full max-w-2xl border-l border-[color:var(--line)]">
+        <div className="transcript-sheet-header">
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">
+              {mode === "debate" ? "Debate Transcript" : "Council Transcript"}
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Live markdown feed</h2>
+          </div>
+
+          <div className="transcript-sheet-actions">
+            <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
+              <span className="transcript-status-dot" />
+              {isRunning ? "Live" : `${turnCount} turns`}
+            </span>
+            <button type="button" onClick={onClose} className="action-button">
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div ref={transcriptBodyRef} className="transcript-sheet-body">
+          <ReactMarkdown
+            components={{
+              h1: ({ children }) => <h1 className="transcript-markdown-h1">{children}</h1>,
+              h2: ({ children }) => <h2 className="transcript-markdown-h2">{children}</h2>,
+              p: ({ children }) => <p className="transcript-markdown-p">{children}</p>,
+              em: ({ children }) => <em className="transcript-markdown-em">{children}</em>,
+              ul: ({ children }) => <ul className="transcript-markdown-ul">{children}</ul>,
+              ol: ({ children }) => <ol className="transcript-markdown-ol">{children}</ol>,
+              li: ({ children }) => <li className="transcript-markdown-li">{children}</li>,
+              code: ({ children }) => <code className="transcript-markdown-code">{children}</code>,
+              blockquote: ({ children }) => <blockquote className="transcript-markdown-blockquote">{children}</blockquote>,
+            }}
+          >
+            {markdown}
+          </ReactMarkdown>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function ChamberStage({
   roster,
   currentFrame,
@@ -447,9 +678,12 @@ function ChamberStage({
   warnings,
   mode,
   prompt,
+  isPromptReadOnly,
   hasLoadedKey,
   hasApiKey,
+  showTranscript,
   onOpenSettings,
+  onOpenTranscript,
   onModeChange,
   onPromptChange,
   onAddMember,
@@ -469,24 +703,27 @@ function ChamberStage({
   warnings: string[];
   mode: RunInput["mode"];
   prompt: string;
+  isPromptReadOnly: boolean;
   hasLoadedKey: boolean;
   hasApiKey: boolean;
+  showTranscript: boolean;
   onOpenSettings: () => void;
+  onOpenTranscript: () => void;
   onModeChange: (mode: RunInput["mode"]) => void;
   onPromptChange: (value: string) => void;
   onAddMember: () => void;
   onOpenParticipant: (id: string) => void;
   onSelectFrame: (index: number) => void;
 }) {
-  const seatPositions = roster.map((_, index) => seatPosition(index, roster.length));
-  const activeSpeakerIndex = currentFrame
-    ? Math.max(
-        0,
-        roster.findIndex((participant) => participant.id === currentFrame.speakerId),
-      )
-    : 0;
-  const bubbleAnchor = seatPositions[activeSpeakerIndex] ?? { left: 50, top: 24 };
-  const bubble = bubblePlacement(bubbleAnchor, roster.length);
+  const activeSpeaker =
+    (currentFrame ? roster.find((participant) => participant.id === currentFrame.speakerId) : null) ?? null;
+  const queueStartIndex = currentFrame ? activeFrameIndex : 0;
+  const queueFrames = frames.slice(queueStartIndex).map((frame, index) => ({
+    frame,
+    participant: roster.find((candidate) => candidate.id === frame.speakerId) ?? null,
+    state: currentFrame && index === 0 ? "active" : "ready",
+  }));
+
   const currentTimeMs = currentFrame?.timestampMs ?? 0;
   const bubbleHintLabel = currentFrame
     ? isBubbleStreaming
@@ -510,8 +747,19 @@ function ChamberStage({
         <SettingsGlyph />
       </button>
 
-      <div className="mb-5">
-        <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">LLM Council</p>
+      <div className="chamber-header">
+        <div className="chamber-header-copy">
+          <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">LLM Council</p>
+        </div>
+        <button
+          type="button"
+          onClick={onAddMember}
+          className="chamber-add-button"
+          aria-label="Add member"
+          title="Add member"
+        >
+          <PlusGlyph />
+        </button>
       </div>
 
       <div className="chamber-control-bar">
@@ -520,8 +768,11 @@ function ChamberStage({
             id="council-prompt"
             className="field chamber-prompt-input"
             value={prompt}
+            readOnly={isPromptReadOnly}
             onChange={(event) => onPromptChange(event.target.value)}
             placeholder="What should the council deliberate?"
+            aria-readonly={isPromptReadOnly}
+            title={isPromptReadOnly ? "Prompt is locked while the debate is running." : undefined}
           />
         </label>
 
@@ -547,8 +798,15 @@ function ChamberStage({
             {isRunning ? "Running..." : `Run ${mode}`}
           </button>
 
-          <button type="button" onClick={onAddMember} className="action-button action-button-compact">
-            Add member
+          <button
+            type="button"
+            onClick={onOpenTranscript}
+            className={`action-button action-button-compact ${showTranscript ? "action-button-primary" : ""}`}
+          >
+            <span className="action-button-icon" aria-hidden="true">
+              <TranscriptGlyph />
+            </span>
+            Transcript
           </button>
         </div>
       </div>
@@ -599,76 +857,116 @@ function ChamberStage({
           <div className="cinema-vignette" />
           <div className="council-floor-glow" />
 
-          {roster.map((participant, index) => {
-            const position = seatPositions[index] ?? { left: 50, top: 24 };
-            const isSpeaking = participant.id === currentFrame?.speakerId;
-
-            return (
-              <div
-                key={participant.id}
-                className={`stage-seat ${index === 0 ? "is-coordinator" : ""} ${isSpeaking ? "is-active" : ""}`}
-                style={{
-                  left: `${position.left}%`,
-                  top: `${position.top}%`,
-                }}
-              >
-                <button
-                  type="button"
-                  className="seat-config-button"
-                  onClick={() => onOpenParticipant(participant.id)}
-                  aria-label={`Configure ${participant.name}`}
-                >
-                  <SettingsGlyph />
-                </button>
-                <div className="stage-avatar" aria-hidden="true">
-                  <span className="stage-eye stage-eye-left" />
-                  <span className="stage-eye stage-eye-right" />
-                  <span className="stage-mouth" />
+          <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
+            <p className="speaker-queue-kicker">Up next</p>
+            <div className="speaker-queue-list">
+              {queueFrames.length > 0 ? (
+                queueFrames.map(({ frame, participant, state }, index) => (
+                  <button
+                    key={frame.id}
+                    type="button"
+                    className={`speaker-queue-item is-${state}`}
+                    onClick={() => onSelectFrame(queueStartIndex + index)}
+                    aria-label={`${state === "active" ? "Current" : "Upcoming"} turn: ${frame.speakerName}`}
+                  >
+                    <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="speaker-queue-avatar" aria-hidden="true">
+                      {participantInitials(frame.speakerName)}
+                    </span>
+                    <span className="speaker-queue-copy">
+                      <span className="speaker-queue-name">{frame.speakerName}</span>
+                      <span className="speaker-queue-model mono">
+                        {frame.chapterLabel} · {participant?.model ?? frame.model}
+                      </span>
+                    </span>
+                    <span className={`speaker-queue-state speaker-queue-state-${state}`}>
+                      {state === "active" ? "active" : "ready"}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="speaker-queue-empty">
+                  {isRunning ? "Waiting for the first turn to enter the queue." : "Run the council to build the queue."}
                 </div>
-                <div className="stage-seat-meta">
-                  <span className="stage-seat-name">{participant.name}</span>
-                  <span className="stage-seat-model mono">{participant.model}</span>
+              )}
+            </div>
+          </aside>
+
+          <div className="speaker-focus-shell">
+            <div className="speaker-focus-stack">
+              <div className="speaker-focus-figure">
+                {activeSpeaker ? (
+                  <button
+                    type="button"
+                    className="speaker-focus-config"
+                    onClick={() => onOpenParticipant(activeSpeaker.id)}
+                    aria-label={`Configure ${activeSpeaker.name}`}
+                  >
+                    <SettingsGlyph />
+                  </button>
+                ) : null}
+
+                <div className={`speaker-focus-avatar ${currentFrame ? "is-speaking" : "is-idle"}`} aria-hidden="true">
+                  <span className="speaker-focus-avatar-ring" />
+                  <span className="speaker-focus-avatar-core">
+                    {participantInitials(activeSpeaker?.name ?? "Council")}
+                  </span>
+                </div>
+
+                <div className="speaker-focus-meta">
+                  <span className="speaker-focus-name">{activeSpeaker?.name ?? "Council"}</span>
+                  <span className="speaker-focus-model mono">
+                    {activeSpeaker?.model ?? (isRunning ? "waiting" : "ready")}
+                  </span>
                 </div>
               </div>
-            );
-          })}
 
-          <div className={`stage-bubble ${bubble.className}`} style={bubble.style}>
-            {currentFrame ? (
-              <article key={currentFrame.id} className="stage-bubble-card">
-                <p className="stage-bubble-speaker">
-                  {currentFrame.speakerName}
-                  <span>{kindLabel(currentFrame.kind)}</span>
-                </p>
-                <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
-                  {displayedBubbleContent || "\u00a0"}
-                </p>
-                {bubbleHintLabel ? (
-                  <div className="stage-bubble-footer">
-                    <span className="stage-bubble-hint">
-                      Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
-                    </span>
-                  </div>
-                ) : null}
-              </article>
-            ) : isRunning ? (
-              <article className="stage-bubble-card stage-bubble-card-muted">
-                <p className="stage-bubble-speaker">
-                  Chamber
-                  <span>idle</span>
-                </p>
-                <p className="stage-bubble-copy">
-                  The room is live. The first speech bubble will land here as soon as the coordinator responds.
-                </p>
-                {bubbleHintLabel ? (
-                  <div className="stage-bubble-footer">
-                    <span className="stage-bubble-hint">
-                      Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
-                    </span>
-                  </div>
-                ) : null}
-              </article>
-            ) : null}
+              <div className={`speaker-focus-bubble ${!currentFrame ? "is-idle" : ""}`}>
+                {currentFrame ? (
+                  <article key={currentFrame.id} className="speaker-focus-bubble-card">
+                    <p className="stage-bubble-speaker">
+                      {currentFrame.speakerName}
+                      <span>{kindLabel(currentFrame.kind)}</span>
+                    </p>
+                    <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
+                      {displayedBubbleContent || "\u00a0"}
+                    </p>
+                    {bubbleHintLabel ? (
+                      <div className="stage-bubble-footer">
+                        <span className="stage-bubble-hint">
+                          Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
+                        </span>
+                      </div>
+                    ) : null}
+                  </article>
+                ) : isRunning ? (
+                  <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
+                    <p className="stage-bubble-speaker">
+                      Chamber
+                      <span>idle</span>
+                    </p>
+                    <p className="stage-bubble-copy">
+                      The room is live. The first speech bubble will land here as soon as the coordinator responds.
+                    </p>
+                    {bubbleHintLabel ? (
+                      <div className="stage-bubble-footer">
+                        <span className="stage-bubble-hint">
+                          Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
+                        </span>
+                      </div>
+                    ) : null}
+                  </article>
+                ) : (
+                  <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
+                    <p className="stage-bubble-speaker">
+                      Chamber
+                      <span>ready</span>
+                    </p>
+                    <p className="stage-bubble-copy">Start the run to put the active speaker here.</p>
+                  </article>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -691,15 +989,28 @@ export function CouncilStudio() {
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showTranscriptSheet, setShowTranscriptSheet] = useState(false);
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [activeFrameIndex, setActiveFrameIndex] = useState(0);
   const [completedBubbleIds, setCompletedBubbleIds] = useState<Record<string, true>>({});
   const [revealedBubbleId, setRevealedBubbleId] = useState<string | null>(null);
   const [revealedBubbleChars, setRevealedBubbleChars] = useState(0);
   const [queuedFrameIndex, setQueuedFrameIndex] = useState<number | null>(null);
+  const [autoAdvanceFrameIndex, setAutoAdvanceFrameIndex] = useState<number | null>(null);
 
   const roster = [config.coordinator, ...config.members];
   const hasApiKey = apiKey.trim().length > 0;
+  const transcriptTurns = flattenTurns(result);
+  const transcriptMode = result?.mode ?? config.mode;
+  const transcriptPrompt = result?.prompt ?? config.prompt;
+  const transcriptMarkdown = useDeferredValue(
+    buildTranscriptMarkdown({
+      mode: transcriptMode,
+      prompt: transcriptPrompt,
+      turns: transcriptTurns,
+      isRunning,
+    }),
+  );
   const timeline = buildPlaybackTimeline(result);
   const frames = timeline.frames;
   const chapters = timeline.chapters;
@@ -792,6 +1103,68 @@ export function CouncilStudio() {
     setQueuedFrameIndex(null);
   }, [frames.length, queuedFrameIndex]);
 
+  useEffect(() => {
+    if (autoAdvanceFrameIndex === null || autoAdvanceFrameIndex >= frames.length) {
+      return;
+    }
+
+    setActiveFrameIndex(autoAdvanceFrameIndex);
+    setAutoAdvanceFrameIndex(null);
+  }, [autoAdvanceFrameIndex, frames.length]);
+
+  useEffect(() => {
+    if (showTranscriptSheet) {
+      return;
+    }
+
+    if (autoAdvanceFrameIndex !== null) {
+      setAutoAdvanceFrameIndex(null);
+    }
+  }, [autoAdvanceFrameIndex, showTranscriptSheet]);
+
+  useEffect(() => {
+    if (!showTranscriptSheet) {
+      return;
+    }
+
+    if (!currentFrame) {
+      if (isRunning && frames.length === 0 && autoAdvanceFrameIndex !== 0) {
+        setAutoAdvanceFrameIndex(0);
+      }
+      return;
+    }
+
+    if (revealedBubbleId !== currentFrame.id) {
+      return;
+    }
+
+    if (revealedBubbleChars < currentFrame.bubbleContent.length) {
+      return;
+    }
+
+    const nextIndex = activeFrameIndex + 1;
+    if (nextIndex < frames.length) {
+      const timeoutId = window.setTimeout(() => {
+        setActiveFrameIndex(nextIndex);
+      }, 180);
+
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    if (isRunning && autoAdvanceFrameIndex !== nextIndex) {
+      setAutoAdvanceFrameIndex(nextIndex);
+    }
+  }, [
+    activeFrameIndex,
+    autoAdvanceFrameIndex,
+    currentFrame,
+    frames.length,
+    isRunning,
+    revealedBubbleId,
+    revealedBubbleChars,
+    showTranscriptSheet,
+  ]);
+
   function updateCoordinator(patch: Partial<ParticipantConfig>) {
     setConfig((current) => ({
       ...current,
@@ -841,6 +1214,7 @@ export function CouncilStudio() {
   function selectFrame(index: number) {
     setActiveFrameIndex(index);
     setQueuedFrameIndex(null);
+    setAutoAdvanceFrameIndex(null);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -855,6 +1229,7 @@ export function CouncilStudio() {
     setActiveFrameIndex(0);
     setCompletedBubbleIds({});
     setQueuedFrameIndex(null);
+    setAutoAdvanceFrameIndex(null);
     setRevealedBubbleId(null);
     setRevealedBubbleChars(0);
     setResult({
@@ -1023,9 +1398,12 @@ export function CouncilStudio() {
           warnings={result?.warnings ?? []}
           mode={config.mode}
           prompt={config.prompt}
+          isPromptReadOnly={isRunning}
           hasLoadedKey={hasLoadedKey}
           hasApiKey={hasApiKey}
+          showTranscript={showTranscriptSheet}
           onOpenSettings={() => setShowSettingsModal(true)}
+          onOpenTranscript={() => setShowTranscriptSheet(true)}
           onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
           onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
           onAddMember={addMember}
@@ -1033,6 +1411,16 @@ export function CouncilStudio() {
           onSelectFrame={selectFrame}
         />
       </form>
+
+      {showTranscriptSheet ? (
+        <TranscriptSheet
+          mode={transcriptMode}
+          turnCount={transcriptTurns.length}
+          isRunning={isRunning}
+          markdown={transcriptMarkdown}
+          onClose={() => setShowTranscriptSheet(false)}
+        />
+      ) : null}
 
       {hasLoadedKey && showSettingsModal ? (
         <StudioSettingsModal
@@ -1052,9 +1440,11 @@ export function CouncilStudio() {
 
       {editableParticipant ? (
         <ParticipantSettingsSheet
+          key={editableParticipant.id}
           roleLabel={editableParticipant.id === config.coordinator.id ? "Coordinator" : "Council member"}
           participant={editableParticipant}
           modelListId={modelListId}
+          showPersonaPresets={editableParticipant.id !== config.coordinator.id}
           onChange={(patch) => {
             if (editableParticipant.id === config.coordinator.id) {
               updateCoordinator(patch);
