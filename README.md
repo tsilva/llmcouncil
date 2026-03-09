@@ -1,8 +1,8 @@
-## LLM Council
+## LLM Pit
 
-Next.js app for running multi-model debate workflows through [OpenRouter](https://openrouter.ai/):
+Next.js app for throwing persona simulations against each other in moderator-led debates through [OpenRouter](https://openrouter.ai/):
 
-- `debate` mode: the moderator frames the prompt, each member debates in sequence for `N` rounds, the moderator intervenes between rounds, and the moderator closes with a consensus.
+- `debate` mode: the moderator frames the prompt, each debater argues in sequence for `N` rounds, the moderator intervenes between rounds, and the moderator closes with a balanced wrap-up.
 
 Each participant has:
 
@@ -32,7 +32,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-On first load, the app prompts for an OpenRouter API key, stores it in browser local storage, and blocks runs until it is set. You can change it later from the main screen.
+On first load, the app lets you save an OpenRouter API key in browser local storage and validates it against OpenRouter. A valid key is required before debates can run. You can still select `openrouter/free` as a model, but this browser-based app cannot call OpenRouter without a key.
 
 ## Environment variables
 
@@ -42,7 +42,7 @@ On first load, the app prompts for an OpenRouter API key, stores it in browser l
 
 This app is a standard Next.js App Router project, so Vercel can deploy it without extra adapters.
 
-1. No backend secret is required. The app uses a user-provided OpenRouter key stored in the browser.
+1. No backend secret is required. The app uses a browser-stored OpenRouter key after it validates. `openrouter/free` can be selected as a model, but it still requires that key in this client-side setup.
 2. Deploy a preview:
 
 ```bash
@@ -57,6 +57,6 @@ vercel deploy --prod -y
 
 ## Notes
 
-- OpenRouter requests are made directly from the client.
-- The UI is implemented in `src/components/council-studio.tsx`.
-- The orchestration logic lives in `src/lib/council-engine.ts`.
+- OpenRouter requests are made directly from the client, so browser runs require a validated OpenRouter API key.
+- The UI is implemented in `src/components/pit-studio.tsx`.
+- The orchestration logic lives in `src/lib/pit-engine.ts`.

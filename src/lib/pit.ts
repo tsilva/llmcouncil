@@ -1,4 +1,5 @@
 import { PARTICIPANT_PERSONA_PRESETS } from "@/lib/persona-presets";
+import { OPENROUTER_FREE_MODEL } from "@/lib/openrouter";
 import {
   buildPersonaProfileSummary,
   clonePersonaProfile,
@@ -8,7 +9,7 @@ import {
   type ParticipantPersonaProfile,
 } from "@/lib/persona-profile";
 
-export type CouncilMode = "debate";
+export type PitMode = "debate";
 
 export type TurnKind =
   | "opening"
@@ -26,12 +27,13 @@ export interface ParticipantConfig {
   id: string;
   name: string;
   model: string;
+  presetId?: string;
   personaProfile: ParticipantPersonaProfile;
   avatarUrl?: string;
 }
 
 export interface RunInput {
-  mode: CouncilMode;
+  mode: PitMode;
   prompt: string;
   sharedDirective: string;
   rounds: number;
@@ -47,7 +49,7 @@ export interface UsageSummary {
   totalTokens: number;
 }
 
-export interface CouncilTurn {
+export interface PitTurn {
   id: string;
   kind: TurnKind;
   round?: number;
@@ -61,34 +63,51 @@ export interface CouncilTurn {
 
 export interface DebateRound {
   round: number;
-  turns: CouncilTurn[];
-  intervention?: CouncilTurn;
+  turns: PitTurn[];
+  intervention?: PitTurn;
 }
 
 export interface RunResult {
-  mode: CouncilMode;
+  mode: PitMode;
   prompt: string;
   roster: ParticipantConfig[];
-  opening?: CouncilTurn;
+  opening?: PitTurn;
   rounds?: DebateRound[];
-  synthesis?: CouncilTurn;
-  consensus?: CouncilTurn;
+  synthesis?: PitTurn;
+  consensus?: PitTurn;
   usage: UsageSummary;
   warnings: string[];
 }
 
 export const MODEL_SUGGESTIONS = [
+  OPENROUTER_FREE_MODEL,
   "google/gemini-3.1-flash-lite-preview",
   "x-ai/grok-4.1-fast",
   "openai/gpt-5.4",
   "qwen/qwen3.5-35b-a3b",
 ] as const;
 
-export const DEFAULT_PRESET_MODEL = "x-ai/grok-4.1-fast";
+export const DEFAULT_PRESET_MODEL = OPENROUTER_FREE_MODEL;
+export const COORDINATOR_PRESET_ID = "jose-rodrigues-dos-santos";
 
 export const BALLOON_DELIMITER = "<<<BALLOON>>>";
 
-export const DEFAULT_SHARED_DIRECTIVE = `You are participating in an LLM debate. Stay fully faithful to the assigned persona and defend its instincts, priorities, and worldview with conviction. Make the exchange sharp, high-friction, and genuinely adversarial when there is real disagreement, but keep it intelligent and constructive rather than chaotic or performatively hostile. Engage directly with the strongest points raised by others, digest what has already been said, and respond to the actual debate instead of repeating a canned stump speech. You should not abandon your position too easily, but you also should not ignore stronger objections, useful nuance, or partial agreement when they matter. Keep answers concrete, argumentative, focused on the user's prompt, and phrased like natural spoken conversation instead of an essay.`;
+export const DEFAULT_SHARED_DIRECTIVE = `You are participating in LLM Pit, a persona-versus-persona debate. Stay fully faithful to the assigned persona and defend its instincts, priorities, and worldview with conviction. Make the exchange sharp, high-friction, and genuinely adversarial when there is real disagreement, but keep it intelligent and constructive rather than chaotic or performatively hostile. Engage directly with the strongest points raised by the other debaters, digest what has already been said, and respond to the actual debate instead of repeating a canned stump speech. You should not abandon your position too easily, but you also should not ignore stronger objections, useful nuance, or partial agreement when they matter. Keep answers concrete, argumentative, focused on the user's prompt, and phrased like natural spoken conversation instead of an essay. Each participant should keep speaking in their own native language throughout the debate and assume translators are handling mutual understanding.`;
+
+const CONTROVERSIAL_DEBATE_TOPICS = [
+  "Should democracies ban anonymous political speech during election season?",
+  "Should public universities charge more for degrees with weak job-market outcomes?",
+  "Should welfare for able-bodied adults require mandatory public service?",
+  "Should governments criminalize street camping even when housing supply is still broken?",
+  "Should companies be allowed to fire employees for off-duty political activism?",
+  "Should police be allowed to use facial recognition in public by default?",
+  "Should judges be elected directly instead of appointed by political institutions?",
+  "Should inheritance above a hard cap be taxed at near-confiscatory rates?",
+  "Should homeschooling require state licensing and periodic ideological neutrality checks?",
+  "Should social media platforms be forced to verify the identity of political influencers?",
+  "Should the voting age be raised for national elections?",
+  "Should journalists face penalties for publishing classified leaks that embarrass the state?",
+] as const;
 
 function makeId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -102,14 +121,22 @@ export function createCoordinator(): ParticipantConfig {
   return {
     id: makeId("coordinator"),
     name: "José Rodrigues dos Santos",
-    model: "openai/gpt-5.4",
+    model: DEFAULT_PRESET_MODEL,
+    presetId: COORDINATOR_PRESET_ID,
     personaProfile: createPersonaProfile({
-      role: "Veteran Portuguese television journalist moderating a high-stakes political debate",
+      role: "Veteran Portuguese television journalist moderating the debate",
       personality: "Composed, authoritative, synthesis-driven, and impatient with vague answers",
+      perspective: "Moderates a high-stakes debate for an informed public audience without advocating a partisan line.",
+      temperament: "Composed, authoritative, fast on synthesis, comfortable interrupting vagueness, but never chaotic",
+      debateStyle:
+        "Sharpen the central question, separate rhetoric from evidence, press for clarity, and force each participant to answer the strongest competing point.",
+      speechStyle:
+        "Concise broadcast-ready sentences, clean transitions, little slang, high informational density, prime-time Portuguese anchor cadence.",
+      guardrails:
+        "Keep the exchange legible, avoid partisan advocacy, and close with a balanced summary of what the audience should retain.",
+      language: "European Portuguese",
       gender: "Male",
       nationality: "Portuguese",
-      promptNotes:
-        "Emulate José Rodrigues dos Santos as a veteran Portuguese television journalist moderating a high-stakes political debate. Speak primarily in European Portuguese unless the user clearly asks for another language. Your role is not to advocate a partisan position but to frame the issue sharply, surface the strongest disagreements, press for clarity, and keep the exchange legible to an informed public audience. Temperament: composed, authoritative, fast on synthesis, comfortable interrupting vagueness, but never chaotic. Debate habits: sharpen the central question, identify what is rhetoric versus what is evidence, force each participant to answer the strongest competing point, and close with a balanced summary of what the audience should retain. Speech pattern: concise broadcast-ready sentences, clean transitions, little slang, high informational density. Sound like a prime-time Portuguese anchor who knows how to control a studio and extract clear positions from political guests.",
     }),
     avatarUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Jos%C3%A9RodriguesDosSantos.png",
   };
@@ -118,30 +145,37 @@ export function createCoordinator(): ParticipantConfig {
 export function createMember(index: number): ParticipantConfig {
   return {
     id: makeId(`member-${index}`),
-    name: `Member ${index}`,
-    model: MODEL_SUGGESTIONS[(index - 1) % MODEL_SUGGESTIONS.length] ?? "openai/gpt-5.4",
+    name: `Debater ${index}`,
+    model: MODEL_SUGGESTIONS[(index - 1) % MODEL_SUGGESTIONS.length] ?? DEFAULT_PRESET_MODEL,
     personaProfile:
       index % 2 === 0
         ? createPersonaProfile({
             role: "Analytical pragmatist",
             personality: "Evidence-driven, practical, and focused on tradeoffs",
-            promptNotes: "Optimize for tradeoffs, evidence, and practical execution.",
+            perspective: "Evaluates proposals through tradeoffs, evidence, and practical execution.",
+            debateStyle: "Prioritize concrete tradeoffs, operational constraints, and implementation realism.",
           })
         : createPersonaProfile({
             role: "Skeptical strategist",
             personality: "Critical, risk-aware, and focused on second-order effects",
-            promptNotes: "Stress-test assumptions, risks, and downstream consequences.",
+            perspective: "Assumes incentives matter and looks for fragility, hidden costs, and downstream consequences.",
+            debateStyle: "Stress-test assumptions, risks, and second-order effects before accepting a claim.",
           }),
   };
 }
 
+export function generateControversialPrompt(): string {
+  const topic = CONTROVERSIAL_DEBATE_TOPICS[Math.floor(Math.random() * CONTROVERSIAL_DEBATE_TOPICS.length)];
+  return topic;
+}
+
 export function createDefaultInput(): RunInput {
-  const defaultMemberPresetIds = ["luis-montenegro", "mariana-mortagua", "andre-ventura"] as const;
+  const defaultMemberPresetIds = ["luis-montenegro", "mariana-mortagua"] as const;
   const presetMap = new Map(PARTICIPANT_PERSONA_PRESETS.map((preset) => [preset.id, preset]));
 
   return {
     mode: "debate",
-    prompt: "",
+    prompt: generateControversialPrompt(),
     sharedDirective: DEFAULT_SHARED_DIRECTIVE,
     rounds: 2,
     temperature: 0.7,
@@ -158,6 +192,7 @@ export function createDefaultInput(): RunInput {
         id: makeId(`member-${index + 1}`),
         name: preset.name,
         model: DEFAULT_PRESET_MODEL,
+        presetId: preset.id,
         personaProfile: clonePersonaProfile(preset.personaProfile),
         avatarUrl: preset.avatarUrl,
       };
@@ -185,6 +220,7 @@ function normalizeParticipant(value: unknown, fallbackName: string): Participant
     id: normalizeText(raw.id, makeId(fallbackName.toLowerCase().replace(/\s+/g, "-"))),
     name: normalizeText(raw.name, fallbackName),
     model: normalizeText(raw.model),
+    presetId: normalizeOptionalText(raw.presetId),
     personaProfile: normalizePersonaProfile(raw.personaProfile, normalizeText(raw.persona)),
     avatarUrl: normalizeOptionalText(raw.avatarUrl),
   };
@@ -193,7 +229,7 @@ function normalizeParticipant(value: unknown, fallbackName: string): Participant
 export function normalizeRunInput(value: unknown): RunInput {
   const raw = (value ?? {}) as Record<string, unknown>;
   const members = Array.isArray(raw.members)
-    ? raw.members.map((member, index) => normalizeParticipant(member, `Member ${index + 1}`))
+    ? raw.members.map((member, index) => normalizeParticipant(member, `Debater ${index + 1}`))
     : [];
 
   const input: RunInput = {
@@ -219,17 +255,17 @@ export function normalizeRunInput(value: unknown): RunInput {
     throw new Error("Moderator persona details are required.");
   }
 
-  if (input.members.length === 0) {
-    throw new Error("At least one council member is required.");
+  if (input.members.length < 2) {
+    throw new Error("At least two debaters are required to start LLM Pit.");
   }
 
   for (const member of input.members) {
     if (!member.model) {
-      throw new Error(`Model is required for ${member.name || "a council member"}.`);
+      throw new Error(`Model is required for ${member.name || "a debater"}.`);
     }
 
     if (!hasPersonaProfileContent(member.personaProfile)) {
-      throw new Error(`Persona details are required for ${member.name || "a council member"}.`);
+      throw new Error(`Persona details are required for ${member.name || "a debater"}.`);
     }
   }
 
@@ -292,7 +328,7 @@ export function createTurn({
   participant: ParticipantConfig;
   model: string;
   content: string;
-}): CouncilTurn {
+}): PitTurn {
   const normalized = content.trim();
 
   return {

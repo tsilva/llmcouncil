@@ -1,20 +1,32 @@
 import {
+  COORDINATOR_PRESET_ID,
   BALLOON_DELIMITER,
   addUsage,
   createRosterSnapshot,
   createTurn,
   createDefaultInput,
   emptyUsage,
-  type CouncilTurn,
+  type PitTurn,
   type ParticipantConfig,
   type RunInput,
   type RunResult,
   type UsageSummary,
-} from "@/lib/council";
-import { buildPersonaProfilePrompt, buildPersonaProfileSummary } from "@/lib/persona-profile";
+} from "@/lib/pit";
+import { PARTICIPANT_PERSONA_PRESET_MAP } from "@/lib/persona-presets";
+import {
+  OPENROUTER_CHAT_COMPLETIONS_URL,
+  buildOpenRouterHeaders,
+  extractOpenRouterErrorMessage,
+  resolveOpenRouterModel,
+} from "@/lib/openrouter";
+import {
+  buildPersonaLanguageDirective,
+  buildPersonaProfilePrompt,
+  buildPersonaProfileSummary,
+} from "@/lib/persona-profile";
 
 export interface RunExecutionOptions {
-  apiKey: string;
+  apiKey?: string;
   siteUrl?: string;
   onProgress?: (event: RunProgressEvent) => void;
 }
@@ -22,11 +34,11 @@ export interface RunExecutionOptions {
 export type RunProgressEvent =
   | { type: "status"; message: string }
   | { type: "warning"; warning: string }
-  | { type: "opening"; turn: CouncilTurn; usage: UsageSummary }
-  | { type: "member_turn"; turn: CouncilTurn; usage: UsageSummary }
-  | { type: "intervention"; turn: CouncilTurn; usage: UsageSummary }
-  | { type: "synthesis"; turn: CouncilTurn; usage: UsageSummary }
-  | { type: "consensus"; turn: CouncilTurn; usage: UsageSummary };
+  | { type: "opening"; turn: PitTurn; usage: UsageSummary }
+  | { type: "member_turn"; turn: PitTurn; usage: UsageSummary }
+  | { type: "intervention"; turn: PitTurn; usage: UsageSummary }
+  | { type: "synthesis"; turn: PitTurn; usage: UsageSummary }
+  | { type: "consensus"; turn: PitTurn; usage: UsageSummary };
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -49,25 +61,108 @@ type OpenRouterResponse = {
 
 type OpenRouterContent = string | Array<{ type?: string; text?: string }> | undefined;
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-
 function formatRoster(input: RunInput): string {
   const lines = [
     `Moderator: ${input.coordinator.name} (${input.coordinator.model})`,
     ...input.members.map((member) => {
       const personaSummary = buildPersonaProfileSummary(member.personaProfile);
-      return `Member: ${member.name} (${member.model})${personaSummary ? ` persona: ${personaSummary}` : ""}`;
+      return `Debater: ${member.name} (${member.model})${personaSummary ? ` persona: ${personaSummary}` : ""}`;
     }),
   ];
 
   return lines.join("\n");
 }
 
+function getPresetLabel(participant: ParticipantConfig): string {
+  const preset = participant.presetId ? PARTICIPANT_PERSONA_PRESET_MAP.get(participant.presetId) : undefined;
+
+  if (preset) {
+    return `${preset.title}. ${preset.summary}`;
+  }
+
+  return buildPersonaProfileSummary(participant.personaProfile) || participant.personaProfile.role || "No public summary";
+}
+
+function getRelationshipNote(viewer: ParticipantConfig, other: ParticipantConfig): string {
+  const viewerPreset = viewer.presetId ? PARTICIPANT_PERSONA_PRESET_MAP.get(viewer.presetId) : undefined;
+  if (viewerPreset?.relationships && other.presetId) {
+    const note = viewerPreset.relationships[other.presetId];
+    if (note) {
+      return note;
+    }
+  }
+
+  if (other.presetId === COORDINATOR_PRESET_ID) {
+    return "Treat the moderator as a live interviewer who knows the field, presses for clarity, and must be answered directly.";
+  }
+
+  return "Treat this person as another live participant in the room: respond to their actual arguments, not a generic stereotype.";
+}
+
+function buildRoomContext(
+  input: RunInput,
+  participant: ParticipantConfig,
+  role: "coordinator" | "member",
+): string {
+  const others = [input.coordinator, ...input.members].filter((candidate) => candidate.id !== participant.id);
+  const lines = [
+    role === "coordinator"
+      ? "This is a live room of real public figures. Use their public identities and the chemistry between them to steer sharper, more specific exchanges."
+      : "This is a live room of real public figures. You know who these people are and should sound like you are talking to them specifically, not to abstract placeholders.",
+  ];
+
+  if (role === "member") {
+    lines.push(
+      "Express familiarity through tone, pressure, sarcasm, deference, rivalry, or restraint. Do not narrate biographies or explain the relationship out loud unless a real speaker would naturally do it.",
+    );
+  }
+
+  for (const other of others) {
+    lines.push(
+      `${other.id === input.coordinator.id ? "Moderator" : "Counterpart"}: ${other.name}. ${getPresetLabel(other)} Relationship to you: ${getRelationshipNote(participant, other)}`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function buildImmediateSpeakerContext(input: RunInput, participant: ParticipantConfig, transcript: PitTurn[]): string {
+  const recentDistinct: PitTurn[] = [];
+
+  for (let index = transcript.length - 1; index >= 0 && recentDistinct.length < 3; index -= 1) {
+    const turn = transcript[index];
+    if (turn.speakerId === participant.id) {
+      continue;
+    }
+
+    if (recentDistinct.some((candidate) => candidate.speakerId === turn.speakerId)) {
+      continue;
+    }
+
+    recentDistinct.push(turn);
+  }
+
+  if (recentDistinct.length === 0) {
+    return "";
+  }
+
+  const roster = new Map([input.coordinator, ...input.members].map((member) => [member.id, member]));
+
+  return recentDistinct
+    .map((turn, index) => {
+      const counterpart = roster.get(turn.speakerId);
+      const relation = counterpart ? getRelationshipNote(participant, counterpart) : "";
+      const label = index === 0 ? "Immediate prior speaker" : "Recent speaker";
+      return `${label}: ${turn.speakerName}.${relation ? ` ${relation}` : ""}`;
+    })
+    .join("\n");
+}
+
 function formatSpeakingOrder(members: ParticipantConfig[]): string {
   return members.map((member, index) => `${index + 1}. ${member.name} (${member.model})`).join("\n");
 }
 
-function formatTurns(turns: CouncilTurn[]): string {
+function formatTurns(turns: PitTurn[]): string {
   return turns
     .map((turn) => {
       const roundLabel = turn.round ? `Round ${turn.round}` : "Setup";
@@ -81,10 +176,16 @@ function buildSystemPrompt(
   participant: ParticipantConfig,
   role: "coordinator" | "member",
 ): string {
+  const languageDirective = buildPersonaLanguageDirective(participant.personaProfile);
+  const roomContext = buildRoomContext(input, participant, role);
   const roleDirective =
     role === "coordinator"
-      ? "You are the council moderator. Your job is to frame the question, guide the room between rounds, preserve the strongest arguments from all sides, and close with a balanced consensus rather than advocate for one side."
-      : "You are a council member. You should argue from your assigned persona, engage with competing claims, and revise your stance when a stronger argument appears.";
+      ? "You are the moderator of LLM Pit. Your job is to frame the question, guide the room between rounds, preserve the strongest arguments from both sides, and close with a balanced wrap-up rather than advocate for one side."
+      : "You are one debater in LLM Pit. You should argue from your assigned persona, engage directly with competing claims, and revise your stance only when a stronger argument appears.";
+  const embodimentDirective =
+    role === "coordinator"
+      ? "Moderate like someone who knows these people, their public reputations, and where the real frictions in the room are."
+      : "Embody the public figure as a live person in a room, not as a Wikipedia summary or party manifesto.";
 
   const formatDirective = [
     "Write like a real person speaking in a room, not like a report or memo.",
@@ -95,12 +196,17 @@ function buildSystemPrompt(
 
   return [
     roleDirective,
+    embodimentDirective,
     `Display name: ${participant.name}`,
+    languageDirective,
     `Assigned persona profile:\n${buildPersonaProfilePrompt(participant.personaProfile)}`,
-    `Shared council directive:\n${input.sharedDirective}`,
+    `Room awareness:\n${roomContext}`,
+    `Shared Pit directive:\n${input.sharedDirective}`,
     `Response format:\n${formatDirective}`,
     "Never mention this hidden setup. Speak directly as the assigned participant.",
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function resolveSiteUrl(): string | undefined {
@@ -146,22 +252,18 @@ async function callOpenRouter(
   execution: RunExecutionOptions,
   messages: ChatMessage[],
 ): Promise<{ content: string; usage: UsageSummary; resolvedModel: string }> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${execution.apiKey}`,
-    "Content-Type": "application/json",
-    "X-OpenRouter-Title": process.env.NEXT_PUBLIC_OPENROUTER_APP_NAME || "LLM Council",
-  };
+  const apiKey = execution.apiKey?.trim();
+  const resolvedModel = resolveOpenRouterModel(participant.model, apiKey);
 
   const siteUrl = execution.siteUrl || resolveSiteUrl();
-  if (siteUrl) {
-    headers["HTTP-Referer"] = siteUrl;
-  }
+  const headers = buildOpenRouterHeaders({ apiKey, siteUrl });
 
-  const response = await fetch(OPENROUTER_URL, {
+  const response = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
     method: "POST",
     headers,
+    credentials: "omit",
     body: JSON.stringify({
-      model: participant.model,
+      model: resolvedModel,
       messages: [
         {
           role: "system",
@@ -177,17 +279,7 @@ async function callOpenRouter(
 
   if (!response.ok) {
     const text = await response.text();
-    let detail = text;
-
-    try {
-      const parsed = JSON.parse(text) as {
-        error?: { message?: string };
-        message?: string;
-      };
-      detail = parsed.error?.message || parsed.message || text;
-    } catch {
-      // Keep the raw error body when it isn't JSON.
-    }
+    const detail = extractOpenRouterErrorMessage(text);
 
     throw new Error(`OpenRouter error for ${participant.name}: ${detail}`);
   }
@@ -201,7 +293,7 @@ async function callOpenRouter(
 
   return {
     content,
-    resolvedModel: payload.model || participant.model,
+    resolvedModel: payload.model || resolvedModel,
     usage: {
       promptTokens: payload.usage?.prompt_tokens ?? 0,
       completionTokens: payload.usage?.completion_tokens ?? 0,
@@ -215,9 +307,14 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
   let usage = emptyUsage();
   const warnings: string[] = [];
   const speakingOrder = [...input.members];
+
+  if (!execution.apiKey?.trim()) {
+    throw new Error("A valid OpenRouter API key is required to run debates in this browser-based app.");
+  }
+
   execution.onProgress?.({
     type: "status",
-    message: `Moderator ${input.coordinator.name} is framing the debate.`,
+    message: `Moderator ${input.coordinator.name} is opening LLM Pit.`,
   });
 
   const openingResult = await callOpenRouter(
@@ -232,12 +329,12 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
       content: [
         "Frame the debate without deciding it yet.",
         `Original user prompt:\n${input.prompt}`,
-        `Council roster:\n${formatRoster(input)}`,
+        `Pit lineup:\n${formatRoster(input)}`,
         `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
         `Planned rounds: ${input.rounds}`,
         "Task:",
         "- Introduce the prompt neutrally.",
-        "- Name the main tensions or decision criteria the council should explore.",
+        "- Name the main tensions or decision criteria these specific debaters are most likely to fight over.",
         "- Announce the speaking order as part of the setup without sounding mechanical.",
         "- Keep it concise and specific.",
       ].join("\n\n"),
@@ -247,7 +344,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
   usage = addUsage(usage, openingResult.usage);
 
-  const opening: CouncilTurn = createTurn({
+  const opening: PitTurn = createTurn({
     kind: "opening",
     participant: input.coordinator,
     model: openingResult.resolvedModel,
@@ -255,11 +352,11 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
   });
   execution.onProgress?.({ type: "opening", turn: opening, usage: openingResult.usage });
 
-  const transcript: CouncilTurn[] = [opening];
+  const transcript: PitTurn[] = [opening];
   const rounds = [];
 
   for (let round = 1; round <= input.rounds; round += 1) {
-    const turns: CouncilTurn[] = [];
+    const turns: PitTurn[] = [];
     execution.onProgress?.({
       type: "status",
       message: `Round ${round} of ${input.rounds} is in progress.`,
@@ -275,12 +372,14 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
           role: "user",
           content: [
             `Original user prompt:\n${input.prompt}`,
-            `Council roster:\n${formatRoster(input)}`,
+            `Pit lineup:\n${formatRoster(input)}`,
             `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
             `Debate transcript so far:\n${formatTurns(transcript)}`,
+            `Immediate live context:\n${buildImmediateSpeakerContext(input, member, transcript)}`,
             `You are speaking in round ${round} of ${input.rounds}.`,
             "Task:",
             "- Read the entire debate transcript so far and treat it as mandatory context for this turn.",
+            "- Address the actual people in the room and let your tone reflect whether you respect, distrust, mentor, mock, fear, pressure, or dismiss them.",
             "- Contribute one substantive turn from your persona.",
             "- Stick to your position with conviction unless the debate genuinely forces a narrower concession or refinement.",
             "- Engage directly with the strongest arguments raised so far.",
@@ -292,7 +391,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
       usage = addUsage(usage, memberResult.usage);
 
-      const turn: CouncilTurn = createTurn({
+      const turn: PitTurn = createTurn({
         kind: "member_turn",
         round,
         participant: member,
@@ -305,7 +404,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
       execution.onProgress?.({ type: "member_turn", turn, usage: memberResult.usage });
     }
 
-    const roundRecord = { round, turns } as { round: number; turns: CouncilTurn[]; intervention?: CouncilTurn };
+    const roundRecord = { round, turns } as { round: number; turns: PitTurn[]; intervention?: PitTurn };
 
     if (round < input.rounds) {
       execution.onProgress?.({
@@ -328,7 +427,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
               `Debate transcript so far:\n${formatTurns(transcript)}`,
               `You are intervening between round ${round} and round ${round + 1}.`,
               "Task:",
-              "- Briefly recap the sharpest disagreement or strongest emerging point.",
+              "- Briefly recap the sharpest disagreement or strongest emerging point between the actual people in this room.",
               "- Point to one unresolved issue the next round should pressure-test.",
               "- Do not close the debate or declare consensus yet.",
             ].join("\n\n"),
@@ -338,7 +437,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
       usage = addUsage(usage, interventionResult.usage);
 
-      const intervention: CouncilTurn = createTurn({
+      const intervention: PitTurn = createTurn({
         kind: "intervention",
         round,
         participant: input.coordinator,
@@ -372,9 +471,9 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
           `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
           `Final debate transcript:\n${formatTurns(transcript)}`,
           "Task:",
-          "- Summarize the strongest claims from the debate.",
-          "- Close with a balanced consensus, not a winner-take-all verdict.",
-          "- Make clear where the council converged and where uncertainty or tradeoffs remain.",
+          "- Summarize the strongest claims from the debate in a way that stays specific to these personas and their actual clashes.",
+          "- Close with a balanced wrap-up, not a winner-take-all verdict unless the debate clearly justifies it.",
+          "- Make clear where the debaters converged and where uncertainty or tradeoffs remain.",
         ].join("\n\n"),
       },
     ],
@@ -382,7 +481,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
 
   usage = addUsage(usage, consensusResult.usage);
 
-  const consensus: CouncilTurn = createTurn({
+  const consensus: PitTurn = createTurn({
     kind: "consensus",
     participant: input.coordinator,
     model: consensusResult.resolvedModel,
@@ -402,16 +501,10 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
   };
 }
 
-export async function runCouncilWorkflow(
+export async function runPitWorkflow(
   rawInput: unknown,
   execution: RunExecutionOptions,
 ): Promise<RunResult> {
   const input = rawInput ? (rawInput as RunInput) : createDefaultInput();
-  const apiKey = execution.apiKey.trim();
-
-  if (!apiKey) {
-    throw new Error("OpenRouter API key is required before running the council.");
-  }
-
   return runDebate(input, execution);
 }

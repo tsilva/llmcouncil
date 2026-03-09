@@ -1,6 +1,13 @@
 "use client";
 
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import {
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import {
   DEFAULT_PRESET_MODEL,
@@ -10,23 +17,80 @@ import {
   createDefaultInput,
   createMember,
   emptyUsage,
-  type CouncilTurn,
+  generateControversialPrompt,
+  type PitTurn,
   type ParticipantConfig,
   type RunInput,
   type RunResult,
-} from "@/lib/council";
-import { runCouncilWorkflow, type RunProgressEvent } from "@/lib/council-engine";
+} from "@/lib/pit";
+import { OPENROUTER_FREE_MODEL, missingOpenRouterKeyMessage, validateOpenRouterKey } from "@/lib/openrouter";
+import { runPitWorkflow, type RunProgressEvent } from "@/lib/pit-engine";
 import { buildPersonaProfilePreview } from "@/lib/persona-profile";
 import { filterParticipantPersonaPresets, type ParticipantPersonaPreset } from "@/lib/persona-presets";
 
-const OPENROUTER_KEY_STORAGE = "llmcouncil.openrouter.key";
+const OPENROUTER_KEY_STORAGE = "llmpit.openrouter.key";
+
+type ApiKeyStatus = "empty" | "checking" | "valid" | "invalid";
+
+function emptyApiKeyStatusMessage(): string {
+  return missingOpenRouterKeyMessage();
+}
+
+async function validateStoredApiKey({
+  nextApiKey,
+  requestIdRef,
+  siteUrl,
+  setApiKeyStatus,
+  setApiKeyStatusMessage,
+}: {
+  nextApiKey: string;
+  requestIdRef: { current: number };
+  siteUrl: string;
+  setApiKeyStatus: React.Dispatch<React.SetStateAction<ApiKeyStatus>>;
+  setApiKeyStatusMessage: React.Dispatch<React.SetStateAction<string>>;
+}): Promise<boolean> {
+  const trimmed = nextApiKey.trim();
+
+  if (!trimmed) {
+    requestIdRef.current += 1;
+    setApiKeyStatus("empty");
+    setApiKeyStatusMessage(emptyApiKeyStatusMessage());
+    return false;
+  }
+
+  const requestId = requestIdRef.current + 1;
+  requestIdRef.current = requestId;
+  setApiKeyStatus("checking");
+  setApiKeyStatusMessage("Validating API key with OpenRouter...");
+
+  try {
+    const validation = await validateOpenRouterKey(nextApiKey, siteUrl);
+    if (requestIdRef.current !== requestId) {
+      return validation.valid;
+    }
+
+    setApiKeyStatus(validation.valid ? "valid" : "invalid");
+    setApiKeyStatusMessage(validation.message);
+    return validation.valid;
+  } catch (validationError) {
+    if (requestIdRef.current !== requestId) {
+      return false;
+    }
+
+    setApiKeyStatus("invalid");
+    setApiKeyStatusMessage(
+      `${validationError instanceof Error ? validationError.message : "Could not validate this API key."} Add a valid OpenRouter key to run debates.`,
+    );
+    return false;
+  }
+}
 
 type PlaybackFrame = {
   id: string;
   turnId: string;
   speakerId: string;
   speakerName: string;
-  kind: CouncilTurn["kind"];
+  kind: PitTurn["kind"];
   round?: number;
   model: string;
   persona: string;
@@ -48,7 +112,7 @@ type TimelineChapter = {
 
 type PlannedQueueTurn = {
   id: string;
-  kind: CouncilTurn["kind"];
+  kind: PitTurn["kind"];
   round?: number;
   speakerId: string;
   speakerName: string;
@@ -58,7 +122,7 @@ type PlannedQueueTurn = {
 
 type QueueEntry = {
   id: string;
-  kind: CouncilTurn["kind"];
+  kind: PitTurn["kind"];
   speakerName: string;
   model: string;
   chapterLabel: string;
@@ -71,18 +135,14 @@ type StagePanelMode = "conversation" | "transcript";
 type StudioView = "setup" | "simulation";
 
 function maskApiKey(value: string): string {
-  if (value.length <= 10) {
-    return "Saved";
-  }
-
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+  return ".".repeat(value.length);
 }
 
-function kindLabel(kind: CouncilTurn["kind"]): string {
+function kindLabel(kind: PitTurn["kind"]): string {
   return kind.replace(/_/g, " ");
 }
 
-function chapterLabelForTurn(turn: CouncilTurn): string {
+function chapterLabelForTurn(turn: PitTurn): string {
   if (turn.kind === "opening") {
     return "Opening";
   }
@@ -96,7 +156,7 @@ function chapterLabelForTurn(turn: CouncilTurn): string {
   }
 
   if (turn.kind === "consensus") {
-    return "Consensus";
+    return "Closing";
   }
 
   if (turn.round) {
@@ -119,7 +179,7 @@ function bubbleHoldDuration(content: string): number {
   return Math.min(9000, Math.max(3200, wordCount * 280));
 }
 
-function flattenTurns(result: RunResult | null): CouncilTurn[] {
+function flattenTurns(result: RunResult | null): PitTurn[] {
   if (!result) {
     return [];
   }
@@ -258,12 +318,14 @@ function buildQueueEntries({
   roster,
   plannedTurns,
   currentFrame,
+  isAwaitingFirstTurn,
   isRunning,
 }: {
   frames: PlaybackFrame[];
   roster: ParticipantConfig[];
   plannedTurns: PlannedQueueTurn[];
   currentFrame?: PlaybackFrame;
+  isAwaitingFirstTurn: boolean;
   isRunning: boolean;
 }): QueueEntry[] {
   const participantById = new Map(roster.map((participant) => [participant.id, participant]));
@@ -277,7 +339,7 @@ function buildQueueEntries({
   }, []);
 
   if (!currentFrame) {
-    if (!isRunning) {
+    if (!isAwaitingFirstTurn) {
       return [];
     }
 
@@ -399,6 +461,37 @@ function FieldShell({
   );
 }
 
+function resizeTextarea(textarea: HTMLTextAreaElement) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function AutoSizeTextarea({
+  className,
+  onChange,
+  ...props
+}: ComponentPropsWithoutRef<"textarea">) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (textareaRef.current) {
+      resizeTextarea(textareaRef.current);
+    }
+  }, [props.value]);
+
+  return (
+    <textarea
+      {...props}
+      ref={textareaRef}
+      className={className}
+      onChange={(event) => {
+        resizeTextarea(event.currentTarget);
+        onChange?.(event);
+      }}
+    />
+  );
+}
+
 function SettingsGlyph() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -469,6 +562,40 @@ function PencilGlyph() {
   );
 }
 
+function EyeGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M2.8 12s3.3-5.5 9.2-5.5 9.2 5.5 9.2 5.5-3.3 5.5-9.2 5.5S2.8 12 2.8 12Z"
+      />
+      <circle cx="12" cy="12" r="2.7" />
+    </svg>
+  );
+}
+
+function EyeOffGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.5 3.5 20.5 20.5M9.9 5.1A10.8 10.8 0 0 1 12 4.9c5.9 0 9.2 5.5 9.2 5.5a17.4 17.4 0 0 1-3.4 3.9M14.8 14.9A3.8 3.8 0 0 1 9 9.1M6.4 6.5A17 17 0 0 0 2.8 12s3.3 5.5 9.2 5.5c1.6 0 3-.4 4.3-1"
+      />
+    </svg>
+  );
+}
+
+function CheckGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m8.7 12.2 2.1 2.1 4.5-4.8" />
+    </svg>
+  );
+}
+
 function WandGlyph() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -481,27 +608,7 @@ function WandGlyph() {
 }
 
 function promptPlaceholder(): string {
-  return "What question should the council debate from opposing angles?";
-}
-
-const CONTROVERSIAL_DEBATE_TOPICS = [
-  "Should democracies ban anonymous political speech during election season?",
-  "Should public universities charge more for degrees with weak job-market outcomes?",
-  "Should welfare for able-bodied adults require mandatory public service?",
-  "Should governments criminalize street camping even when housing supply is still broken?",
-  "Should companies be allowed to fire employees for off-duty political activism?",
-  "Should police be allowed to use facial recognition in public by default?",
-  "Should judges be elected directly instead of appointed by political institutions?",
-  "Should inheritance above a hard cap be taxed at near-confiscatory rates?",
-  "Should homeschooling require state licensing and periodic ideological neutrality checks?",
-  "Should social media platforms be forced to verify the identity of political influencers?",
-  "Should the voting age be raised for national elections?",
-  "Should journalists face penalties for publishing classified leaks that embarrass the state?",
-];
-
-function generateControversialPrompt(): string {
-  const topic = CONTROVERSIAL_DEBATE_TOPICS[Math.floor(Math.random() * CONTROVERSIAL_DEBATE_TOPICS.length)];
-  return topic;
+  return "What should these personas fight out in LLM Pit?";
 }
 
 function SetupParticipantCard({
@@ -517,6 +624,10 @@ function SetupParticipantCard({
 
   return (
     <button type="button" className="hero-roster-card" onClick={onEdit} aria-label={`Edit ${participant.name}`}>
+      <span className="hero-roster-edit" aria-hidden="true">
+        <SettingsGlyph />
+      </span>
+
       <div className="hero-roster-card-top">
         <ParticipantAvatar
           name={participant.name}
@@ -531,10 +642,6 @@ function SetupParticipantCard({
           <span className="hero-roster-name">{participant.name}</span>
           <span className="hero-roster-model mono">{participant.model}</span>
         </div>
-
-        <span className="hero-roster-edit" aria-hidden="true">
-          <SettingsGlyph />
-        </span>
       </div>
 
       <p className="hero-roster-persona">
@@ -547,6 +654,8 @@ function SetupParticipantCard({
 function StudioHero({
   config,
   apiKey,
+  apiKeyStatus,
+  apiKeyStatusMessage,
   draftApiKey,
   canSubmit,
   hasApiKey,
@@ -561,23 +670,29 @@ function StudioHero({
 }: {
   config: RunInput;
   apiKey: string;
+  apiKeyStatus: ApiKeyStatus;
+  apiKeyStatusMessage: string;
   draftApiKey: string;
   canSubmit: boolean;
   hasApiKey: boolean;
   hasLoadedKey: boolean;
   isRunning: boolean;
   onDraftApiKeyChange: (value: string) => void;
-  onSaveApiKey: () => boolean;
+  onSaveApiKey: () => Promise<boolean>;
   onOpenSettings: () => void;
   onPromptChange: (value: string) => void;
   onAddMember: () => void;
   onOpenParticipant: (id: string) => void;
 }) {
   const roster = [config.coordinator, ...config.members];
-  const apiKeyLabel = hasLoadedKey ? (hasApiKey ? maskApiKey(apiKey) : "OpenRouter key required") : "Loading";
+  const apiKeyLabel = hasLoadedKey ? (hasApiKey ? maskApiKey(apiKey) : "No key saved") : "Loading";
   const [isEditingApiKey, setIsEditingApiKey] = useState(false);
+  const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
   const apiKeyInputRef = useRef<HTMLInputElement | null>(null);
   const isApiKeyEditorVisible = isEditingApiKey || (hasLoadedKey && !hasApiKey);
+  const apiKeyFieldValue = isApiKeyEditorVisible ? draftApiKey : hasApiKey ? (isApiKeyVisible ? apiKey : apiKeyLabel) : apiKeyLabel;
+  const statusTone =
+    apiKeyStatus === "valid" ? "success" : apiKeyStatus === "invalid" ? "error" : apiKeyStatus === "checking" ? "info" : "warning";
 
   useEffect(() => {
     if (!isApiKeyEditorVisible) {
@@ -588,10 +703,10 @@ function StudioHero({
     apiKeyInputRef.current?.select();
   }, [isApiKeyEditorVisible]);
 
-  function handleApiKeySubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleApiKeySubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (onSaveApiKey()) {
+    if (await onSaveApiKey()) {
       setIsEditingApiKey(false);
     }
   }
@@ -600,71 +715,18 @@ function StudioHero({
     <section className="hero-shell">
       <section className="hero-panel hero-copy-panel">
         <div className="hero-copy-stack">
-          <h1 className="hero-title">LLM Council</h1>
+          <h1 className="hero-title">LLM Pit</h1>
           <p className="hero-body">
-            Choose the prompt, set the council, and launch. Once you hit play, the setup surface clears out and the chamber takes over.
+            Pick a moderator, choose at least two persona simulations, and throw them into a live debate. Once you hit play, the setup surface clears out and the room takes over.
           </p>
-
-          <div className="hero-api-block">
-            <form
-              className={`status-chip hero-api-chip hero-copy-api ${isApiKeyEditorVisible ? "is-editing" : ""}`}
-              onSubmit={handleApiKeySubmit}
-            >
-              <label className="hero-api-editor-field" htmlFor="hero-api-key-input">
-                <span className="hero-api-editor-label">
-                  {hasApiKey ? "OpenRouter API key" : "Enter your OpenRouter API key"}
-                </span>
-                {isApiKeyEditorVisible ? (
-                  <input
-                    id="hero-api-key-input"
-                    ref={apiKeyInputRef}
-                    className="field mono hero-api-input"
-                    type="password"
-                    value={draftApiKey}
-                    onChange={(event) => onDraftApiKeyChange(event.target.value)}
-                    placeholder="sk-or-v1-..."
-                    autoComplete="off"
-                  />
-                ) : (
-                  <strong className="mono">{apiKeyLabel}</strong>
-                )}
-              </label>
-              <button
-                type={isApiKeyEditorVisible ? "submit" : "button"}
-                onClick={
-                  isApiKeyEditorVisible
-                    ? undefined
-                    : () => {
-                        setIsEditingApiKey(true);
-                      }
-                }
-                className={`hero-api-edit-button ${isApiKeyEditorVisible ? "is-confirm" : ""}`}
-                aria-label={isApiKeyEditorVisible ? "Confirm API key" : "Edit API key"}
-                title={isApiKeyEditorVisible ? "Confirm API key" : "Edit API key"}
-              >
-                {isApiKeyEditorVisible ? "Confirm" : <PencilGlyph />}
-              </button>
-            </form>
-
-            {!hasApiKey && hasLoadedKey ? (
-              <a
-                href="https://openrouter.ai/settings/keys"
-                target="_blank"
-                rel="noreferrer"
-                className="hero-api-link"
-              >
-                Get an OpenRouter key from OpenRouter
-              </a>
-            ) : null}
-          </div>
         </div>
       </section>
 
       <section className="hero-panel hero-roster-shell">
         <div className="hero-roster-header">
           <div>
-            <p className="hero-kicker">Council Selector</p>
-            <h2 className="hero-panel-title">Select your council members</h2>
+            <p className="hero-kicker">Pit Lineup</p>
+            <h2 className="hero-panel-title">Select the moderator and debaters</h2>
           </div>
 
           <button type="button" onClick={onAddMember} className="chamber-add-button">
@@ -677,7 +739,7 @@ function StudioHero({
             <SetupParticipantCard
               key={participant.id}
               participant={participant}
-              roleLabel={participant.id === config.coordinator.id ? "Moderator" : "Council member"}
+              roleLabel={participant.id === config.coordinator.id ? "Moderator" : "Debater"}
               onEdit={() => onOpenParticipant(participant.id)}
             />
           ))}
@@ -687,8 +749,8 @@ function StudioHero({
       <section className="hero-panel hero-prompt-shell">
         <div className="hero-prompt-header">
           <div>
-            <p className="hero-kicker">Prompt Configurator</p>
-            <h2 className="hero-panel-title">Define what the council should deliberate</h2>
+            <p className="hero-kicker">Debate Topic</p>
+            <h2 className="hero-panel-title">What is the debate topic about?</h2>
           </div>
 
           <div className="hero-selector-actions">
@@ -706,7 +768,7 @@ function StudioHero({
           </div>
         </div>
 
-        <label className="hero-prompt-panel" htmlFor="hero-council-prompt">
+        <label className="hero-prompt-panel" htmlFor="hero-pit-prompt">
           <div className="hero-prompt-input-shell">
             <button
               type="button"
@@ -718,8 +780,9 @@ function StudioHero({
               <WandGlyph />
             </button>
 
-            <textarea
-              id="hero-council-prompt"
+            <input
+              type="text"
+              id="hero-pit-prompt"
               className="field hero-prompt-input"
               value={config.prompt}
               onChange={(event) => onPromptChange(event.target.value)}
@@ -727,6 +790,78 @@ function StudioHero({
             />
           </div>
         </label>
+      </section>
+
+      <section className="hero-panel hero-api-shell">
+        <div className="hero-api-header">
+          <div>
+            <p className="hero-kicker">OpenRouter Access</p>
+            <h2 className="hero-panel-title">OpenRouter key</h2>
+            <p className="hero-panel-copy">
+              Browser runs need a valid OpenRouter API key, including for <span className="mono">{OPENROUTER_FREE_MODEL}</span>. Create one in{" "}
+              <a href="https://openrouter.ai/" target="_blank" rel="noreferrer" className="hero-api-link">
+                OpenRouter
+              </a>{" "}
+              and manage it in{" "}
+              <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer" className="hero-api-link">
+                key settings
+              </a>
+              .
+            </p>
+          </div>
+        </div>
+
+        <div className="hero-api-block">
+          <form className={`hero-api-form ${isApiKeyEditorVisible ? "is-editing" : ""}`} onSubmit={handleApiKeySubmit}>
+            <input
+              id="hero-api-key-input"
+              ref={apiKeyInputRef}
+              className="field mono hero-api-input"
+              type={isApiKeyEditorVisible ? (isApiKeyVisible ? "text" : "password") : "text"}
+              value={apiKeyFieldValue}
+              onChange={(event) => onDraftApiKeyChange(event.target.value)}
+              placeholder="sk-or-v1-..."
+              autoComplete="off"
+              readOnly={!isApiKeyEditorVisible}
+              aria-label="OpenRouter API key"
+            />
+            <div className="hero-api-input-actions">
+              <button
+                type="button"
+                onClick={() => setIsApiKeyVisible((current) => !current)}
+                className="hero-api-icon-button"
+                aria-label={isApiKeyVisible ? "Hide API key" : "Show API key"}
+                title={isApiKeyVisible ? "Hide API key" : "Show API key"}
+              >
+                {isApiKeyVisible ? <EyeOffGlyph /> : <EyeGlyph />}
+              </button>
+              <button
+                type={isApiKeyEditorVisible ? "submit" : "button"}
+                disabled={apiKeyStatus === "checking"}
+                onClick={
+                  isApiKeyEditorVisible
+                    ? undefined
+                    : () => {
+                        setIsEditingApiKey(true);
+                      }
+                }
+                className={`hero-api-edit-button ${isApiKeyEditorVisible ? "is-confirm" : ""}`}
+                aria-label={isApiKeyEditorVisible ? "Confirm API key" : "Edit API key"}
+                title={isApiKeyEditorVisible ? "Confirm API key" : "Edit API key"}
+              >
+                {isApiKeyEditorVisible ? (apiKeyStatus === "checking" ? "Testing..." : "Confirm") : <PencilGlyph />}
+              </button>
+            </div>
+          </form>
+          <div className={`hero-api-status hero-api-status-${statusTone}`} role="status" aria-live="polite">
+            {apiKeyStatus === "valid" ? (
+              <span className="hero-api-status-icon" aria-hidden="true">
+                <CheckGlyph />
+              </span>
+            ) : null}
+            <span>{apiKeyStatusMessage}</span>
+          </div>
+        </div>
       </section>
 
       <button
@@ -761,15 +896,17 @@ function PersonaSelectorModal({
       <section className="settings-sheet persona-selector-modal-panel w-full max-w-3xl p-6 sm:p-7">
         <div className="settings-modal-header">
           <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Council Selector</p>
-            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Choose a persona</h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-[color:var(--ink-soft)]">
-              Select a preset to add a new council member. You can fine-tune the member after adding it.
-            </p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Pit Lineup</p>
+            <p className="hero-panel-copy">Choose a preset persona to quickly populate this seat in the debate.</p>
           </div>
 
-          <button type="button" onClick={onClose} className="action-button">
-            Close
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close persona selector"
+            className="icon-circle-button persona-selector-modal-close"
+          >
+            <CloseGlyph />
           </button>
         </div>
 
@@ -778,7 +915,7 @@ function PersonaSelectorModal({
             className="field"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search Portuguese politicians"
+            placeholder="Search personas"
           />
 
           <div className="persona-preset-list persona-selector-modal-list" role="list" aria-label="Persona presets">
@@ -801,13 +938,11 @@ function PersonaSelectorModal({
                     <span className="persona-preset-card-copy">
                       <span className="persona-preset-card-header">
                         <span className="persona-preset-card-name">{preset.name}</span>
-                        <span className="persona-preset-card-language">{preset.language}</span>
                       </span>
                       <span className="persona-preset-card-title">{preset.title}</span>
                       <span className="persona-preset-card-summary">{preset.summary}</span>
                     </span>
                   </span>
-                  <span className="persona-preset-card-cta">Add to council</span>
                 </button>
               ))
             ) : (
@@ -840,21 +975,9 @@ function ParticipantSettingsSheet({
   const [draftName, setDraftName] = useState(participant.name);
   const [draftAvatarUrl, setDraftAvatarUrl] = useState(participant.avatarUrl ?? "");
   const [isAvatarDropActive, setIsAvatarDropActive] = useState(false);
-  const personaNotesTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const avatarEditorRef = useRef<HTMLDivElement | null>(null);
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const textarea = personaNotesTextareaRef.current;
-
-    if (!textarea) {
-      return;
-    }
-
-    textarea.style.height = "0px";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [participant.personaProfile.promptNotes]);
 
   useEffect(() => {
     if (isEditingName) {
@@ -927,8 +1050,8 @@ function ParticipantSettingsSheet({
 
   return (
     <div className="settings-modal-backdrop participant-modal-backdrop">
-      <button type="button" className="settings-modal-dismiss" aria-label="Close member settings" onClick={onClose} />
-      <section className="settings-sheet participant-modal-panel" role="dialog" aria-modal="true" aria-label="Council member settings">
+      <button type="button" className="settings-modal-dismiss" aria-label="Close participant settings" onClick={onClose} />
+      <section className="settings-sheet participant-modal-panel" role="dialog" aria-modal="true" aria-label="Participant settings">
         <div className="participant-modal-header">
           <div className="participant-sheet-header">
             <div className="participant-avatar-anchor" ref={avatarEditorRef}>
@@ -943,7 +1066,7 @@ function ParticipantSettingsSheet({
                 title="Edit participant avatar"
               >
                 <ParticipantAvatar
-                  name={participant.name || "Council member"}
+                  name={participant.name || "Participant"}
                   avatarUrl={participant.avatarUrl}
                   className="participant-avatar-preview"
                   fallbackClassName="participant-avatar-preview-fallback"
@@ -1064,7 +1187,7 @@ function ParticipantSettingsSheet({
                         setIsEditingName(false);
                       }
                     }}
-                    placeholder="Council member name"
+                    placeholder="Debater name"
                   />
                 ) : (
                   <>
@@ -1115,7 +1238,7 @@ function ParticipantSettingsSheet({
             </select>
           </FieldShell>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4">
             <FieldShell label="Role">
               <input
                 className="field"
@@ -1134,61 +1257,112 @@ function ParticipantSettingsSheet({
               />
             </FieldShell>
 
-            <FieldShell label="Gender">
-              <input
-                className="field"
-                value={participant.personaProfile.gender}
-                onChange={(event) => updatePersonaProfile({ gender: event.target.value })}
-                placeholder="Optional"
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <FieldShell label="Language">
+                <input
+                  className="field"
+                  value={participant.personaProfile.language}
+                  onChange={(event) => updatePersonaProfile({ language: event.target.value })}
+                  placeholder="European Portuguese"
+                />
+              </FieldShell>
+
+              <FieldShell label="Gender">
+                <input
+                  className="field"
+                  value={participant.personaProfile.gender}
+                  onChange={(event) => updatePersonaProfile({ gender: event.target.value })}
+                  placeholder="Optional"
+                />
+              </FieldShell>
+
+              <FieldShell label="Nationality">
+                <input
+                  className="field"
+                  value={participant.personaProfile.nationality}
+                  onChange={(event) => updatePersonaProfile({ nationality: event.target.value })}
+                  placeholder="Optional"
+                />
+              </FieldShell>
+
+              <FieldShell label="Birth Date">
+                <input
+                  type="date"
+                  className="field"
+                  value={participant.personaProfile.birthDate}
+                  onChange={(event) => updatePersonaProfile({ birthDate: event.target.value })}
+                />
+              </FieldShell>
+            </div>
+
+            <FieldShell label="Perspective">
+              <AutoSizeTextarea
+                className="field min-h-24 resize-none overflow-hidden"
+                value={participant.personaProfile.perspective}
+                onChange={(event) => updatePersonaProfile({ perspective: event.target.value })}
+                placeholder="Core worldview, mission, or governing perspective..."
               />
             </FieldShell>
 
-            <FieldShell label="Nationality">
+            <FieldShell label="Temperament">
               <input
                 className="field"
-                value={participant.personaProfile.nationality}
-                onChange={(event) => updatePersonaProfile({ nationality: event.target.value })}
-                placeholder="Optional"
+                value={participant.personaProfile.temperament}
+                onChange={(event) => updatePersonaProfile({ temperament: event.target.value })}
+                placeholder="Measured, combative, playful, severe..."
               />
             </FieldShell>
 
-            <FieldShell label="Birth Date">
-              <input
-                className="field"
-                value={participant.personaProfile.birthDate}
-                onChange={(event) => updatePersonaProfile({ birthDate: event.target.value })}
-                placeholder="Optional"
+            <FieldShell label="Debate Style">
+              <AutoSizeTextarea
+                className="field min-h-24 resize-none overflow-hidden"
+                value={participant.personaProfile.debateStyle}
+                onChange={(event) => updatePersonaProfile({ debateStyle: event.target.value })}
+                placeholder="How this person argues, presses points, and responds..."
+              />
+            </FieldShell>
+
+            <FieldShell label="Speech Style">
+              <AutoSizeTextarea
+                className="field min-h-24 resize-none overflow-hidden"
+                value={participant.personaProfile.speechStyle}
+                onChange={(event) => updatePersonaProfile({ speechStyle: event.target.value })}
+                placeholder="Sentence rhythm, vocabulary, tone, delivery..."
+              />
+            </FieldShell>
+
+            <FieldShell label="Guardrails">
+              <AutoSizeTextarea
+                className="field min-h-24 resize-none overflow-hidden"
+                value={participant.personaProfile.guardrails}
+                onChange={(event) => updatePersonaProfile({ guardrails: event.target.value })}
+                placeholder="What this person should avoid sounding like or doing..."
               />
             </FieldShell>
           </div>
 
-          <FieldShell
-            label="Additional Guidance"
-            hint="Extra instructions that should be stitched into the hidden prompt for this participant."
-          >
-            <textarea
-              ref={personaNotesTextareaRef}
-              className="field participant-persona-input"
+          <FieldShell label="Additional Guidance">
+            <span className="mb-2 block text-sm text-[color:var(--muted)]">
+              Use only for instructions that do not fit the structured persona fields above.
+            </span>
+            <AutoSizeTextarea
+              className="field min-h-28 resize-none overflow-hidden participant-persona-input"
               value={participant.personaProfile.promptNotes}
-              onChange={(event) => {
-                event.target.style.height = "0px";
-                event.target.style.height = `${event.target.scrollHeight}px`;
-                updatePersonaProfile({ promptNotes: event.target.value });
-              }}
-              placeholder="How should this participant think, speak, and argue?"
+              onChange={(event) => updatePersonaProfile({ promptNotes: event.target.value })}
+              placeholder="Anything still not captured by role, perspective, style, or guardrails..."
             />
           </FieldShell>
           </div>
 
           {onRemove ? (
             <div className="participant-modal-footer">
-            <button
-              type="button"
-              onClick={onRemove}
-              className="rounded-full border border-red-500/35 px-4 py-2 text-sm font-medium text-red-200 transition hover:border-red-400 hover:bg-red-500/10 hover:text-white"
-            >
-              Remove from council
-            </button>
+              <button
+                type="button"
+                onClick={onRemove}
+                className="rounded-full border border-red-500/35 px-4 py-2 text-sm font-medium text-red-200 transition hover:border-red-400 hover:bg-red-500/10 hover:text-white"
+              >
+                Remove member
+              </button>
             </div>
           ) : null}
         </div>
@@ -1197,7 +1371,7 @@ function ParticipantSettingsSheet({
   );
 }
 
-function transcriptTurnBody(turn: CouncilTurn): string {
+function transcriptTurnBody(turn: PitTurn): string {
   const segments = turn.bubbles.length > 0 ? turn.bubbles.map((bubble) => bubble.content.trim()).filter(Boolean) : [turn.content];
   return segments.join("\n\n");
 }
@@ -1208,12 +1382,10 @@ function buildTranscriptMarkdown({
   isRunning,
 }: {
   prompt: string;
-  turns: CouncilTurn[];
+  turns: PitTurn[];
   isRunning: boolean;
 }): string {
   const lines = [
-    `# Debate Transcript`,
-    "",
     "## Prompt",
     "",
     prompt.trim() || "_No prompt set yet._",
@@ -1224,7 +1396,7 @@ function buildTranscriptMarkdown({
       "",
       "## Live Feed",
       "",
-      isRunning ? "_Waiting for the first response..._" : "_Run the council to generate a transcript._",
+      isRunning ? "_Waiting for the first response..._" : "_Start LLM Pit to generate a transcript._",
     );
 
     return lines.join("\n");
@@ -1264,7 +1436,7 @@ function StudioSettingsModal({
       <section className="settings-sheet settings-modal-panel w-full max-w-3xl p-6 sm:p-7">
         <div className="settings-modal-header">
           <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Council Settings</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Pit Settings</p>
             <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Room controls and run options</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-[color:var(--ink-soft)]">
               Adjust the debate-wide run settings from one place.
@@ -1396,10 +1568,12 @@ function TranscriptPanel({
 
         <div className="transcript-sheet-footer">
           <div className="transcript-sheet-actions transcript-sheet-actions-footer">
-            <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
-              <span className="transcript-status-dot" />
-              {isRunning ? (thinkingSpeakerName ? `Thinking: ${thinkingSpeakerName}` : "Thinking...") : `${turnCount} turns`}
-            </span>
+            {isRunning || turnCount > 0 ? (
+              <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
+                <span className="transcript-status-dot" />
+                {isRunning ? (thinkingSpeakerName ? `Thinking: ${thinkingSpeakerName}` : "Thinking...") : `${turnCount} turns`}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1463,20 +1637,22 @@ function ChamberStage({
     coordinator: roster[0] ?? createDefaultInput().coordinator,
     members: roster.slice(1),
   });
+  const hasPlaybackStarted = hasSessionStarted || isRunning || frames.length > 0;
+  const isAwaitingFirstTurn = hasPlaybackStarted && frames.length === 0 && !error;
   const queueEntries = buildQueueEntries({
     frames,
     roster,
     plannedTurns: plannedQueueTurns,
     currentFrame,
+    isAwaitingFirstTurn,
     isRunning,
   });
-  const thinkingEntry = isRunning ? queueEntries.find((entry) => entry.state === "thinking") ?? null : null;
+  const thinkingEntry = queueEntries.find((entry) => entry.state === "thinking") ?? null;
   const focusSpeaker =
     (currentFrame ? roster.find((participant) => participant.id === currentFrame.speakerId) : null) ??
     thinkingEntry?.participant ??
     null;
 
-  const hasPlaybackStarted = hasSessionStarted || isRunning || frames.length > 0;
   const canConfigureActiveSpeaker = false;
   const canGoPrevious = activeFrameIndex > 0;
   const canGoNext = activeFrameIndex < frames.length - 1;
@@ -1512,7 +1688,7 @@ function ChamberStage({
             {panelMode === "conversation" ? (
               <>
                 <div className="cinema-vignette" />
-                <div className="council-floor-glow" />
+                <div className="pit-floor-glow" />
                 <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
                   <p className="speaker-queue-kicker">Up next</p>
                   <div className="speaker-queue-list">
@@ -1582,7 +1758,7 @@ function ChamberStage({
                       <div className={`speaker-focus-avatar ${currentFrame || thinkingEntry ? "is-speaking" : "is-idle"}`} aria-hidden="true">
                         <span className="speaker-focus-avatar-ring" />
                         <ParticipantAvatar
-                          name={focusSpeaker?.name ?? "Council"}
+                          name={focusSpeaker?.name ?? "LLM Pit"}
                           avatarUrl={focusSpeaker?.avatarUrl}
                           className="speaker-focus-avatar-core"
                           fallbackClassName="speaker-focus-avatar-fallback"
@@ -1590,7 +1766,7 @@ function ChamberStage({
                       </div>
 
                       <div className="speaker-focus-meta">
-                        <span className="speaker-focus-name">{focusSpeaker?.name ?? "Council"}</span>
+                        <span className="speaker-focus-name">{focusSpeaker?.name ?? "LLM Pit"}</span>
                         <span className="speaker-focus-model mono">
                           {focusSpeaker?.model ?? (isRunning ? "thinking" : "ready")}
                         </span>
@@ -1619,10 +1795,10 @@ function ChamberStage({
                       ) : (
                         <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
                           <p className="stage-bubble-speaker">
-                            Chamber
+                            LLM Pit
                             <span>ready</span>
                           </p>
-                          <p className="stage-bubble-copy">Start the run to put the active speaker here.</p>
+                          <p className="stage-bubble-copy">Start the debate to put the active speaker here.</p>
                         </article>
                       )}
                     </div>
@@ -1711,12 +1887,14 @@ function ChamberStage({
   );
 }
 
-export function CouncilStudio() {
+export function PitStudio() {
   const [config, setConfig] = useState<RunInput>(() => createDefaultInput());
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [apiKey, setApiKey] = useState("");
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>("empty");
+  const [apiKeyStatusMessage, setApiKeyStatusMessage] = useState(emptyApiKeyStatusMessage);
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -1730,9 +1908,11 @@ export function CouncilStudio() {
   const [revealedBubbleChars, setRevealedBubbleChars] = useState(0);
   const [isPlaybackPlaying, setIsPlaybackPlaying] = useState(true);
   const [frameCompletedAt, setFrameCompletedAt] = useState<number | null>(null);
+  const keyValidationRequestIdRef = useRef(0);
 
   const roster = [config.coordinator, ...config.members];
   const hasApiKey = apiKey.trim().length > 0;
+  const hasValidatedApiKey = apiKeyStatus === "valid";
   const hasPrompt = config.prompt.trim().length > 0;
   const transcriptTurns = flattenTurns(result);
   const transcriptPrompt = result?.prompt ?? config.prompt;
@@ -1763,6 +1943,16 @@ export function CouncilStudio() {
       setApiKey(storedKey);
       setDraftApiKey(storedKey);
       setShowSettingsModal(false);
+      void validateStoredApiKey({
+        nextApiKey: storedKey,
+        requestIdRef: keyValidationRequestIdRef,
+        siteUrl: window.location.origin,
+        setApiKeyStatus,
+        setApiKeyStatusMessage,
+      });
+    } else {
+      setApiKeyStatus("empty");
+      setApiKeyStatusMessage(emptyApiKeyStatusMessage());
     }
     setHasLoadedKey(true);
   }, []);
@@ -1890,6 +2080,7 @@ export function CouncilStudio() {
           ...createMember(current.members.length + 1),
           name: preset.name,
           model: DEFAULT_PRESET_MODEL,
+          presetId: preset.id,
           personaProfile: { ...preset.personaProfile },
           avatarUrl: preset.avatarUrl,
         },
@@ -1908,16 +2099,34 @@ export function CouncilStudio() {
     setActiveEditorId(id);
   }
 
-  function saveApiKey() {
+  async function saveApiKey() {
     const trimmed = draftApiKey.trim();
     if (!trimmed) {
-      setError("OpenRouter API key is required before running the council.");
-      return false;
+      window.localStorage.removeItem(OPENROUTER_KEY_STORAGE);
+      setApiKey("");
+      setDraftApiKey("");
+      await validateStoredApiKey({
+        nextApiKey: "",
+        requestIdRef: keyValidationRequestIdRef,
+        siteUrl: window.location.origin,
+        setApiKeyStatus,
+        setApiKeyStatusMessage,
+      });
+      setShowSettingsModal(false);
+      setError(null);
+      return true;
     }
 
     window.localStorage.setItem(OPENROUTER_KEY_STORAGE, trimmed);
     setApiKey(trimmed);
     setDraftApiKey(trimmed);
+    await validateStoredApiKey({
+      nextApiKey: trimmed,
+      requestIdRef: keyValidationRequestIdRef,
+      siteUrl: window.location.origin,
+      setApiKeyStatus,
+      setApiKeyStatusMessage,
+    });
     setShowSettingsModal(false);
     setError(null);
     return true;
@@ -1970,15 +2179,12 @@ export function CouncilStudio() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!hasApiKey) {
-      setError("Enter your OpenRouter API key before running the council.");
-      return;
-    }
     if (!hasPrompt) {
-      setError("Enter a prompt before running the council.");
+      setError("Enter a prompt before starting LLM Pit.");
       return;
     }
 
+    const runWithValidatedKey = hasValidatedApiKey;
     setStudioView("simulation");
     setError(null);
     setActiveFrameIndex(0);
@@ -1990,8 +2196,21 @@ export function CouncilStudio() {
     const payload: RunInput = {
       ...config,
       mode: "debate",
+      coordinator: runWithValidatedKey
+        ? config.coordinator
+        : {
+            ...config.coordinator,
+            model: OPENROUTER_FREE_MODEL,
+          },
       members: shuffleParticipants(config.members),
     };
+
+    if (!runWithValidatedKey) {
+      payload.members = payload.members.map((member) => ({
+        ...member,
+        model: OPENROUTER_FREE_MODEL,
+      }));
+    }
 
     setResult({
       mode: payload.mode,
@@ -2004,8 +2223,8 @@ export function CouncilStudio() {
     setIsRunning(true);
 
     try {
-      const resultPayload = await runCouncilWorkflow(payload, {
-        apiKey,
+      const resultPayload = await runPitWorkflow(payload, {
+        apiKey: runWithValidatedKey ? apiKey : "",
         siteUrl: window.location.origin,
         onProgress: (progressEvent) => {
           applyProgressEvent(progressEvent);
@@ -2014,7 +2233,7 @@ export function CouncilStudio() {
 
       setResult(resultPayload);
     } catch (submissionError) {
-      setError(submissionError instanceof Error ? submissionError.message : "The council run failed.");
+      setError(submissionError instanceof Error ? submissionError.message : "LLM Pit run failed.");
     } finally {
       setIsRunning(false);
     }
@@ -2163,9 +2382,11 @@ export function CouncilStudio() {
           <StudioHero
             config={config}
             apiKey={apiKey}
+            apiKeyStatus={apiKeyStatus}
+            apiKeyStatusMessage={apiKeyStatusMessage}
             draftApiKey={draftApiKey}
             hasApiKey={hasApiKey}
-            canSubmit={hasLoadedKey && hasApiKey && hasPrompt}
+            canSubmit={hasLoadedKey && apiKeyStatus !== "checking" && hasPrompt && config.members.length >= 2}
             hasLoadedKey={hasLoadedKey}
             isRunning={isRunning}
             onDraftApiKeyChange={setDraftApiKey}
@@ -2228,7 +2449,7 @@ export function CouncilStudio() {
       {editableParticipant ? (
         <ParticipantSettingsSheet
           key={editableParticipant.id}
-          roleLabel={editableParticipant.id === config.coordinator.id ? "Moderator" : "Council member"}
+          roleLabel={editableParticipant.id === config.coordinator.id ? "Moderator" : "Debater"}
           participant={editableParticipant}
           onChange={(patch) => {
             if (editableParticipant.id === config.coordinator.id) {
@@ -2240,7 +2461,7 @@ export function CouncilStudio() {
           }}
           onClose={() => setActiveEditorId(null)}
           onRemove={
-            editableParticipant.id === config.coordinator.id || config.members.length === 1
+            editableParticipant.id === config.coordinator.id || config.members.length <= 2
               ? undefined
               : () => {
                   removeMember(editableParticipant.id);
