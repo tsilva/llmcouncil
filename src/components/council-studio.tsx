@@ -44,6 +44,13 @@ type TimelineChapter = {
   timestampMs: number;
 };
 
+type QueueFrameGroup = {
+  frame: PlaybackFrame;
+  participant: ParticipantConfig | null;
+  state: "active" | "ready";
+  frameIndex: number;
+};
+
 type StagePanelMode = "conversation" | "transcript";
 type StudioView = "setup" | "simulation";
 
@@ -158,6 +165,38 @@ function buildPlaybackTimeline(result: RunResult | null): {
     frames,
     totalDurationMs: elapsedMs,
   };
+}
+
+function buildQueueFrameGroups({
+  frames,
+  roster,
+  startIndex,
+  hasCurrentFrame,
+}: {
+  frames: PlaybackFrame[];
+  roster: ParticipantConfig[];
+  startIndex: number;
+  hasCurrentFrame: boolean;
+}): QueueFrameGroup[] {
+  const rosterById = new Map(roster.map((participant) => [participant.id, participant]));
+  const groups: QueueFrameGroup[] = [];
+
+  frames.slice(startIndex).forEach((frame, index) => {
+    const previousGroup = groups[groups.length - 1];
+
+    if (previousGroup?.frame.speakerId === frame.speakerId) {
+      return;
+    }
+
+    groups.push({
+      frame,
+      participant: rosterById.get(frame.speakerId) ?? null,
+      state: hasCurrentFrame && index === 0 ? "active" : "ready",
+      frameIndex: startIndex + index,
+    });
+  });
+
+  return groups;
 }
 
 function participantInitials(name: string): string {
@@ -334,6 +373,7 @@ function SetupParticipantCard({
 function StudioHero({
   config,
   apiKey,
+  canSubmit,
   hasApiKey,
   hasLoadedKey,
   isRunning,
@@ -345,6 +385,7 @@ function StudioHero({
 }: {
   config: RunInput;
   apiKey: string;
+  canSubmit: boolean;
   hasApiKey: boolean;
   hasLoadedKey: boolean;
   isRunning: boolean;
@@ -422,7 +463,7 @@ function StudioHero({
           <div className="hero-launch-actions">
             <button
               type="submit"
-              disabled={isRunning || !hasLoadedKey || !hasApiKey}
+              disabled={isRunning || !canSubmit}
               className="action-button action-button-primary hero-play-button"
             >
               <span className="action-button-icon">
@@ -951,15 +992,11 @@ function ChamberStage({
   warnings,
   mode,
   prompt,
-  memberCount,
   hasSessionStarted,
-  canSubmit,
   panelMode,
   transcriptMode,
   transcriptTurnCount,
   transcriptMarkdown,
-  onOpenSettings,
-  onEditSetup,
   onPanelModeChange,
   onOpenParticipant,
   onSelectFrame,
@@ -977,15 +1014,11 @@ function ChamberStage({
   warnings: string[];
   mode: RunInput["mode"];
   prompt: string;
-  memberCount: number;
   hasSessionStarted: boolean;
-  canSubmit: boolean;
   panelMode: StagePanelMode;
   transcriptMode: RunInput["mode"];
   transcriptTurnCount: number;
   transcriptMarkdown: string;
-  onOpenSettings: () => void;
-  onEditSetup: () => void;
   onPanelModeChange: (mode: StagePanelMode) => void;
   onOpenParticipant: (id: string) => void;
   onSelectFrame: (index: number) => void;
@@ -993,14 +1026,16 @@ function ChamberStage({
   const activeSpeaker =
     (currentFrame ? roster.find((participant) => participant.id === currentFrame.speakerId) : null) ?? null;
   const queueStartIndex = currentFrame ? activeFrameIndex : 0;
-  const queueFrames = frames.slice(queueStartIndex).map((frame, index) => ({
-    frame,
-    participant: roster.find((candidate) => candidate.id === frame.speakerId) ?? null,
-    state: currentFrame && index === 0 ? "active" : "ready",
-  }));
+  const queueFrames = buildQueueFrameGroups({
+    frames,
+    roster,
+    startIndex: queueStartIndex,
+    hasCurrentFrame: Boolean(currentFrame),
+  });
 
   const hasPlaybackStarted = hasSessionStarted || isRunning || frames.length > 0;
   const currentTimeMs = currentFrame?.timestampMs ?? 0;
+  const canConfigureActiveSpeaker = Boolean(activeSpeaker) && !(mode === "debate" && isRunning);
   const bubbleHintLabel = currentFrame
     ? isBubbleStreaming
       ? "to finish"
@@ -1013,16 +1048,6 @@ function ChamberStage({
 
   return (
     <section className="chamber-shell">
-      <button
-        type="button"
-        onClick={onOpenSettings}
-        className="stage-settings-button stage-settings-button-floating"
-        aria-label="Open settings"
-        title="Settings"
-      >
-        <SettingsGlyph />
-      </button>
-
       <div className="chamber-header">
         <div className="chamber-header-copy">
           <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">
@@ -1030,20 +1055,6 @@ function ChamberStage({
           </p>
           <h1 className="chamber-runtime-title">{mode === "debate" ? "Live chamber playback" : "Live consensus playback"}</h1>
           <p className="chamber-runtime-prompt">{prompt.trim() || "No prompt set yet."}</p>
-        </div>
-        <div className="chamber-runtime-actions">
-          <span className="status-chip">{memberCount} voices</span>
-          <span className="status-chip">{mode}</span>
-          <button type="button" onClick={onEditSetup} className="action-button" disabled={isRunning}>
-            Edit setup
-          </button>
-          <button
-            type="submit"
-            disabled={isRunning || !canSubmit}
-            className="action-button action-button-primary"
-          >
-            {isRunning ? "Running..." : "Run again"}
-          </button>
         </div>
       </div>
 
@@ -1057,12 +1068,12 @@ function ChamberStage({
               <p className="speaker-queue-kicker">Up next</p>
               <div className="speaker-queue-list">
                 {queueFrames.length > 0 ? (
-                  queueFrames.map(({ frame, participant, state }, index) => (
+                  queueFrames.map(({ frame, participant, state, frameIndex }, index) => (
                     <button
                       key={frame.id}
                       type="button"
                       className={`speaker-queue-item is-${state}`}
-                      onClick={() => onSelectFrame(queueStartIndex + index)}
+                      onClick={() => onSelectFrame(frameIndex)}
                       aria-label={`${state === "active" ? "Current" : "Upcoming"} turn: ${frame.speakerName}`}
                     >
                     <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
@@ -1103,7 +1114,7 @@ function ChamberStage({
                 ) : (
                   <div className="speaker-focus-stack">
                     <div className="speaker-focus-figure">
-                      {activeSpeaker ? (
+                      {canConfigureActiveSpeaker && activeSpeaker ? (
                         <button
                           type="button"
                           className="speaker-focus-config"
@@ -1271,6 +1282,7 @@ export function CouncilStudio() {
 
   const roster = [config.coordinator, ...config.members];
   const hasApiKey = apiKey.trim().length > 0;
+  const hasPrompt = config.prompt.trim().length > 0;
   const transcriptTurns = flattenTurns(result);
   const transcriptMode = result?.mode ?? config.mode;
   const transcriptPrompt = result?.prompt ?? config.prompt;
@@ -1495,6 +1507,10 @@ export function CouncilStudio() {
       setError("Enter your OpenRouter API key before running the council.");
       return;
     }
+    if (!hasPrompt) {
+      setError("Enter a prompt before running the council.");
+      return;
+    }
 
     setStudioView("simulation");
     setError(null);
@@ -1678,6 +1694,7 @@ export function CouncilStudio() {
             config={config}
             apiKey={apiKey}
             hasApiKey={hasApiKey}
+            canSubmit={hasLoadedKey && hasApiKey && hasPrompt}
             hasLoadedKey={hasLoadedKey}
             isRunning={isRunning}
             onOpenSettings={() => setShowSettingsModal(true)}
@@ -1701,15 +1718,11 @@ export function CouncilStudio() {
             warnings={result?.warnings ?? []}
             mode={config.mode}
             prompt={config.prompt}
-            memberCount={roster.length}
             hasSessionStarted={studioView === "simulation"}
-            canSubmit={hasLoadedKey && hasApiKey}
             panelMode={panelMode}
             transcriptMode={transcriptMode}
             transcriptTurnCount={transcriptTurns.length}
             transcriptMarkdown={transcriptMarkdown}
-            onOpenSettings={() => setShowSettingsModal(true)}
-            onEditSetup={() => setStudioView("setup")}
             onPanelModeChange={setPanelMode}
             onOpenParticipant={openParticipantEditor}
             onSelectFrame={selectFrame}
