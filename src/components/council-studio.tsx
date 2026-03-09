@@ -214,59 +214,6 @@ function SettingsGlyph() {
   );
 }
 
-function WaitingGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <circle cx="12" cy="12" r="8" opacity="0.35" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v5l3 2" />
-    </svg>
-  );
-}
-
-function SparkGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z" />
-    </svg>
-  );
-}
-
-function HandGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M8 11V6.8a1.3 1.3 0 1 1 2.6 0V10m0 0V5.8a1.3 1.3 0 1 1 2.6 0v4m-2.6.2V5a1.3 1.3 0 1 1 2.6 0v5m0 .2V6.2a1.3 1.3 0 1 1 2.6 0v7.1c0 3.15-2.55 5.7-5.7 5.7H11c-3.87 0-7-3.13-7-7v-1.2a1.8 1.8 0 1 1 3.6 0V11H8Z"
-      />
-    </svg>
-  );
-}
-
-function StatusGlyph({
-  isRunning,
-  hasRun,
-  queuedFrameIndex,
-}: {
-  isRunning: boolean;
-  hasRun: boolean;
-  queuedFrameIndex: number | null;
-}) {
-  if (queuedFrameIndex !== null) {
-    return <WaitingGlyph />;
-  }
-
-  if (isRunning) {
-    return <SparkGlyph />;
-  }
-
-  if (hasRun) {
-    return <HandGlyph />;
-  }
-
-  return <HandGlyph />;
-}
-
 function ParticipantSettingsSheet({
   roleLabel,
   participant,
@@ -496,13 +443,10 @@ function ChamberStage({
   totalDurationMs,
   isRunning,
   isBubbleStreaming,
-  queuedFrameIndex,
-  statusMessage,
   error,
   warnings,
   mode,
   prompt,
-  hasRun,
   hasLoadedKey,
   hasApiKey,
   onOpenSettings,
@@ -521,13 +465,10 @@ function ChamberStage({
   totalDurationMs: number;
   isRunning: boolean;
   isBubbleStreaming: boolean;
-  queuedFrameIndex: number | null;
-  statusMessage: string | null;
   error: string | null;
   warnings: string[];
   mode: RunInput["mode"];
   prompt: string;
-  hasRun: boolean;
   hasLoadedKey: boolean;
   hasApiKey: boolean;
   onOpenSettings: () => void;
@@ -547,23 +488,6 @@ function ChamberStage({
   const bubbleAnchor = seatPositions[activeSpeakerIndex] ?? { left: 50, top: 24 };
   const bubble = bubblePlacement(bubbleAnchor, roster.length);
   const currentTimeMs = currentFrame?.timestampMs ?? 0;
-  const currentChapter =
-    chapters.reduce<TimelineChapter | null>((match, chapter) => {
-      if (chapter.frameIndex <= activeFrameIndex) {
-        return chapter;
-      }
-
-      return match;
-    }, null) ?? chapters[0] ?? null;
-  const playbackLabel = currentFrame
-    ? `${currentFrame.chapterLabel} · ${currentFrame.speakerName}`
-    : isRunning
-      ? "Waiting for the first line"
-      : "Standby";
-  const playbackStateLabel =
-    queuedFrameIndex !== null ? "Queued" : isRunning ? "Live" : hasRun ? "Replay" : "Standby";
-  const combinedStatusLabel = statusMessage ? `${playbackStateLabel} · ${statusMessage}` : playbackStateLabel;
-  const showStatusPill = queuedFrameIndex !== null || isRunning || hasRun || Boolean(statusMessage);
   const bubbleHintLabel = currentFrame
     ? isBubbleStreaming
       ? "to finish"
@@ -630,27 +554,9 @@ function ChamberStage({
       </div>
 
       <div className="stage-frame">
-        <div className="stage-header">
-          <div className="stage-metadata">
-            <span>{playbackLabel}</span>
-            {currentFrame ? (
-              <span className="mono">
-                {currentFrame.bubbleIndex + 1}/{currentFrame.bubbleCount}
-              </span>
-            ) : null}
-          </div>
-        </div>
-
         <div className="timeline-shell">
           <div className="timeline-controls">
             <div className="timeline-meta">
-              {showStatusPill ? (
-                <span className="timeline-pill timeline-status-pill">
-                  <StatusGlyph isRunning={isRunning} hasRun={hasRun} queuedFrameIndex={queuedFrameIndex} />
-                  {combinedStatusLabel}
-                </span>
-              ) : null}
-              {currentChapter ? <span className="timeline-pill timeline-pill-muted">{currentChapter.label}</span> : null}
               <div className="timeline-clock mono">
                 <span>{formatClock(currentTimeMs)}</span>
                 <span>/</span>
@@ -785,7 +691,6 @@ export function CouncilStudio() {
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [activeFrameIndex, setActiveFrameIndex] = useState(0);
   const [completedBubbleIds, setCompletedBubbleIds] = useState<Record<string, true>>({});
@@ -947,7 +852,6 @@ export function CouncilStudio() {
     }
 
     setError(null);
-    setStatusMessage("Preparing council run.");
     setActiveFrameIndex(0);
     setCompletedBubbleIds({});
     setQueuedFrameIndex(null);
@@ -974,10 +878,8 @@ export function CouncilStudio() {
       });
 
       setResult(payload);
-      setStatusMessage(config.mode === "debate" ? "Debate complete." : "Council consensus complete.");
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "The council run failed.");
-      setStatusMessage(null);
     } finally {
       setIsRunning(false);
     }
@@ -1042,7 +944,6 @@ export function CouncilStudio() {
 
   function applyProgressEvent(event: RunProgressEvent) {
     if (event.type === "status") {
-      setStatusMessage(event.message);
       return;
     }
 
@@ -1118,13 +1019,10 @@ export function CouncilStudio() {
           totalDurationMs={totalDurationMs}
           isRunning={isRunning}
           isBubbleStreaming={isBubbleStreaming}
-          queuedFrameIndex={queuedFrameIndex}
-          statusMessage={statusMessage}
           error={error}
           warnings={result?.warnings ?? []}
           mode={config.mode}
           prompt={config.prompt}
-          hasRun={Boolean(result)}
           hasLoadedKey={hasLoadedKey}
           hasApiKey={hasApiKey}
           onOpenSettings={() => setShowSettingsModal(true)}

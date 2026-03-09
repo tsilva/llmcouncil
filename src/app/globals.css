@@ -135,26 +135,6 @@ select {
     linear-gradient(180deg, rgba(21, 31, 42, 0.95) 0%, rgba(10, 15, 21, 0.96) 100%);
 }
 
-.stage-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 0.85rem 0.95rem 0.4rem;
-}
-
-.stage-metadata {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: 0.65rem;
-  color: var(--muted);
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
 .stage-settings-button {
   display: inline-flex;
   align-items: center;
@@ -388,6 +368,9 @@ select {
 
 .stage-bubble-card {
   position: relative;
+  max-height: min(20rem, calc(100vh - 14rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: 1.2rem;
   border: 1px solid rgba(255, 231, 198, 0.14);
   background:
@@ -441,6 +424,7 @@ select {
   line-height: 1.48;
   letter-spacing: 0.01em;
   color: #241f1b;
+  overflow-wrap: anywhere;
 }
 
 .stage-bubble-copy.is-streaming::after {
@@ -610,53 +594,29 @@ select {
   margin-left: auto;
 }
 
-.timeline-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.36rem;
-  min-height: 1.8rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 231, 198, 0.14);
-  background: rgba(255, 248, 237, 0.05);
-  padding: 0.26rem 0.58rem;
-  color: var(--foreground);
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.timeline-pill svg {
-  width: 0.8rem;
-  height: 0.8rem;
-}
-
-.timeline-pill-muted {
-  color: var(--muted);
-}
-
 .timeline-track-shell {
   position: relative;
   margin-top: 0.7rem;
-  padding-top: 0.32rem;
+  padding-top: 0;
+  min-height: 0.92rem;
 }
 
 .timeline-marker-row {
   position: absolute;
-  inset: 0 0 auto;
-  height: 0.7rem;
+  inset: 0;
+  z-index: 1;
 }
 
 .timeline-marker {
   position: absolute;
-  top: 0;
+  top: 50%;
   width: 0.55rem;
   height: 0.55rem;
   border-radius: 999px;
   border: 0;
-  background: rgba(240, 171, 105, 0.72);
-  box-shadow: 0 0 0 4px rgba(240, 171, 105, 0.1);
-  transform: translateX(-50%);
+  background: rgba(240, 171, 105, 0.42);
+  box-shadow: 0 0 0 2px rgba(240, 171, 105, 0.09);
+  transform: translate(-50%, -50%);
   cursor: pointer;
 }
 
@@ -666,6 +626,8 @@ select {
 }
 
 .timeline-slider {
+  position: relative;
+  z-index: 2;
   width: 100%;
   appearance: none;
   height: 0.36rem;
@@ -944,7 +906,6 @@ select {
     border-radius: 1.2rem;
   }
 
-  .stage-header,
   .timeline-shell {
     padding-left: 0.75rem;
     padding-right: 0.75rem;
