@@ -45,6 +45,7 @@ type TimelineChapter = {
 };
 
 type StagePanelMode = "conversation" | "transcript";
+type StudioView = "setup" | "simulation";
 
 function maskApiKey(value: string): string {
   if (value.length <= 10) {
@@ -262,6 +263,198 @@ function PlusGlyph() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
     </svg>
+  );
+}
+
+function PlayGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M8.5 6.2a1 1 0 0 1 1.5-.86l8.17 5.3a1.6 1.6 0 0 1 0 2.72L10 18.66a1 1 0 0 1-1.5-.86V6.2Z" />
+    </svg>
+  );
+}
+
+function modeSummary(mode: RunInput["mode"]): string {
+  if (mode === "debate") {
+    return "Coordinator opens, members respond in rounds, then the room closes with a synthesis.";
+  }
+
+  return "Members respond in parallel first, then the coordinator resolves them into a consensus.";
+}
+
+function SetupParticipantCard({
+  participant,
+  roleLabel,
+  onEdit,
+}: {
+  participant: ParticipantConfig;
+  roleLabel: string;
+  onEdit: () => void;
+}) {
+  const personaPreview = participant.persona.trim().replace(/\s+/g, " ");
+
+  return (
+    <button type="button" className="hero-roster-card" onClick={onEdit} aria-label={`Edit ${participant.name}`}>
+      <div className="hero-roster-card-top">
+        <ParticipantAvatar
+          name={participant.name}
+          avatarUrl={participant.avatarUrl}
+          className="hero-roster-avatar"
+          fallbackClassName="hero-roster-avatar-fallback"
+          imageClassName="avatar-image"
+        />
+
+        <div className="hero-roster-copy">
+          <span className="hero-roster-role">{roleLabel}</span>
+          <span className="hero-roster-name">{participant.name}</span>
+          <span className="hero-roster-model mono">{participant.model}</span>
+        </div>
+
+        <span className="hero-roster-edit" aria-hidden="true">
+          <SettingsGlyph />
+        </span>
+      </div>
+
+      <p className="hero-roster-persona">
+        {personaPreview ? `${personaPreview.slice(0, 180)}${personaPreview.length > 180 ? "..." : ""}` : "Add a persona to shape this voice in the room."}
+      </p>
+    </button>
+  );
+}
+
+function StudioHero({
+  config,
+  apiKey,
+  hasApiKey,
+  hasLoadedKey,
+  isRunning,
+  onOpenSettings,
+  onModeChange,
+  onPromptChange,
+  onAddMember,
+  onOpenParticipant,
+}: {
+  config: RunInput;
+  apiKey: string;
+  hasApiKey: boolean;
+  hasLoadedKey: boolean;
+  isRunning: boolean;
+  onOpenSettings: () => void;
+  onModeChange: (mode: RunInput["mode"]) => void;
+  onPromptChange: (value: string) => void;
+  onAddMember: () => void;
+  onOpenParticipant: (id: string) => void;
+}) {
+  const roster = [config.coordinator, ...config.members];
+  const apiKeyLabel = hasLoadedKey ? (hasApiKey ? maskApiKey(apiKey) : "Required") : "Loading";
+
+  return (
+    <section className="hero-shell">
+      <div className="hero-grid">
+        <section className="hero-panel hero-copy-panel">
+          <p className="hero-kicker">LLM Council</p>
+          <h1 className="hero-title">Shape the room before the simulation begins.</h1>
+          <p className="hero-body">
+            Choose the prompt, set the council, and launch. Once you hit play, the setup surface clears out and the chamber takes over.
+          </p>
+
+          <div className="hero-status-row">
+            <span className="status-chip">
+              API key
+              <strong className="mono">{apiKeyLabel}</strong>
+            </span>
+            <span className="status-chip">
+              {config.members.length + 1} voices
+            </span>
+            <span className="status-chip">{config.rounds} rounds</span>
+          </div>
+
+          <label className="hero-prompt-panel" htmlFor="hero-council-prompt">
+            <span className="label">Prompt</span>
+            <textarea
+              id="hero-council-prompt"
+              className="field hero-prompt-input"
+              value={config.prompt}
+              onChange={(event) => onPromptChange(event.target.value)}
+              placeholder="What should the council deliberate?"
+            />
+          </label>
+        </section>
+
+        <aside className="hero-panel hero-launch-panel">
+          <div>
+            <p className="hero-kicker">Launch</p>
+            <h2 className="hero-panel-title">Select the run shape</h2>
+            <p className="hero-panel-copy">{modeSummary(config.mode)}</p>
+          </div>
+
+          <div className="mode-toggle hero-mode-toggle">
+            {(["debate", "council"] as const).map((nextMode) => (
+              <button
+                key={nextMode}
+                type="button"
+                onClick={() => onModeChange(nextMode)}
+                className={`mode-toggle-button ${config.mode === nextMode ? "is-selected" : ""}`}
+              >
+                {nextMode}
+              </button>
+            ))}
+          </div>
+
+          <div className="hero-stat-grid">
+            <div className="hero-stat-card">
+              <span>Temperature</span>
+              <strong>{config.temperature.toFixed(1)}</strong>
+            </div>
+            <div className="hero-stat-card">
+              <span>Max tokens</span>
+              <strong>{config.maxCompletionTokens}</strong>
+            </div>
+          </div>
+
+          <div className="hero-launch-actions">
+            <button
+              type="submit"
+              disabled={isRunning || !hasLoadedKey || !hasApiKey}
+              className="action-button action-button-primary hero-play-button"
+            >
+              <span className="action-button-icon">
+                <PlayGlyph />
+              </span>
+              {isRunning ? "Running..." : "Play simulation"}
+            </button>
+
+            <button type="button" onClick={onOpenSettings} className="action-button">
+              Run settings
+            </button>
+          </div>
+        </aside>
+      </div>
+
+      <section className="hero-panel hero-roster-shell">
+        <div className="hero-roster-header">
+          <div>
+            <p className="hero-kicker">Council Cast</p>
+            <h2 className="hero-panel-title">Edit the voices before they enter</h2>
+          </div>
+
+          <button type="button" onClick={onAddMember} className="chamber-add-button">
+            <PlusGlyph />
+          </button>
+        </div>
+
+        <div className="hero-roster-grid">
+          {roster.map((participant) => (
+            <SetupParticipantCard
+              key={participant.id}
+              participant={participant}
+              roleLabel={participant.id === config.coordinator.id ? "Coordinator" : "Council member"}
+              onEdit={() => onOpenParticipant(participant.id)}
+            />
+          ))}
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -751,18 +944,16 @@ function ChamberStage({
   warnings,
   mode,
   prompt,
-  isPromptReadOnly,
-  hasLoadedKey,
-  hasApiKey,
+  memberCount,
+  hasSessionStarted,
+  canSubmit,
   panelMode,
   transcriptMode,
   transcriptTurnCount,
   transcriptMarkdown,
   onOpenSettings,
+  onEditSetup,
   onPanelModeChange,
-  onModeChange,
-  onPromptChange,
-  onAddMember,
   onOpenParticipant,
   onSelectFrame,
 }: {
@@ -779,18 +970,16 @@ function ChamberStage({
   warnings: string[];
   mode: RunInput["mode"];
   prompt: string;
-  isPromptReadOnly: boolean;
-  hasLoadedKey: boolean;
-  hasApiKey: boolean;
+  memberCount: number;
+  hasSessionStarted: boolean;
+  canSubmit: boolean;
   panelMode: StagePanelMode;
   transcriptMode: RunInput["mode"];
   transcriptTurnCount: number;
   transcriptMarkdown: string;
   onOpenSettings: () => void;
+  onEditSetup: () => void;
   onPanelModeChange: (mode: StagePanelMode) => void;
-  onModeChange: (mode: RunInput["mode"]) => void;
-  onPromptChange: (value: string) => void;
-  onAddMember: () => void;
   onOpenParticipant: (id: string) => void;
   onSelectFrame: (index: number) => void;
 }) {
@@ -803,7 +992,7 @@ function ChamberStage({
     state: currentFrame && index === 0 ? "active" : "ready",
   }));
 
-  const hasPlaybackStarted = isRunning || frames.length > 0;
+  const hasPlaybackStarted = hasSessionStarted || isRunning || frames.length > 0;
   const currentTimeMs = currentFrame?.timestampMs ?? 0;
   const bubbleHintLabel = currentFrame
     ? isBubbleStreaming
@@ -829,53 +1018,24 @@ function ChamberStage({
 
       <div className="chamber-header">
         <div className="chamber-header-copy">
-          <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">LLM Council</p>
+          <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">
+            {mode === "debate" ? "Debate Simulation" : "Council Simulation"}
+          </p>
+          <h1 className="chamber-runtime-title">{mode === "debate" ? "Live chamber playback" : "Live consensus playback"}</h1>
+          <p className="chamber-runtime-prompt">{prompt.trim() || "No prompt set yet."}</p>
         </div>
-        <button
-          type="button"
-          onClick={onAddMember}
-          className="chamber-add-button"
-          aria-label="Add member"
-          title="Add member"
-        >
-          <PlusGlyph />
-        </button>
-      </div>
-
-      <div className="chamber-control-bar">
-        <label className="chamber-prompt-shell" htmlFor="council-prompt">
-          <input
-            id="council-prompt"
-            className="field chamber-prompt-input"
-            value={prompt}
-            readOnly={isPromptReadOnly}
-            onChange={(event) => onPromptChange(event.target.value)}
-            placeholder="What should the council deliberate?"
-            aria-readonly={isPromptReadOnly}
-            title={isPromptReadOnly ? "Prompt is locked while the debate is running." : undefined}
-          />
-        </label>
-
-        <div className="chamber-control-actions">
-          <div className="mode-toggle mode-toggle-compact">
-            {(["debate", "council"] as const).map((nextMode) => (
-              <button
-                key={nextMode}
-                type="button"
-                onClick={() => onModeChange(nextMode)}
-                className={`mode-toggle-button mode-toggle-button-compact ${mode === nextMode ? "is-selected" : ""}`}
-              >
-                {nextMode}
-              </button>
-            ))}
-          </div>
-
+        <div className="chamber-runtime-actions">
+          <span className="status-chip">{memberCount} voices</span>
+          <span className="status-chip">{mode}</span>
+          <button type="button" onClick={onEditSetup} className="action-button" disabled={isRunning}>
+            Edit setup
+          </button>
           <button
             type="submit"
-            disabled={isRunning || !hasLoadedKey || !hasApiKey}
-            className="action-button action-button-primary action-button-compact"
+            disabled={isRunning || !canSubmit}
+            className="action-button action-button-primary"
           >
-            {isRunning ? "Running..." : `Run ${mode}`}
+            {isRunning ? "Running..." : "Run again"}
           </button>
         </div>
       </div>
@@ -1092,6 +1252,7 @@ export function CouncilStudio() {
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [studioView, setStudioView] = useState<StudioView>("setup");
   const [panelMode, setPanelMode] = useState<StagePanelMode>("conversation");
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [activeFrameIndex, setActiveFrameIndex] = useState(0);
@@ -1328,6 +1489,7 @@ export function CouncilStudio() {
       return;
     }
 
+    setStudioView("simulation");
     setError(null);
     setActiveFrameIndex(0);
     setCompletedBubbleIds({});
@@ -1364,6 +1526,10 @@ export function CouncilStudio() {
   }
 
   useEffect(() => {
+    if (studioView !== "simulation") {
+      return;
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (
@@ -1431,7 +1597,7 @@ export function CouncilStudio() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeFrameIndex, currentFrame, frames.length, isRunning, panelMode, revealedBubbleChars]);
+  }, [activeFrameIndex, currentFrame, frames.length, isRunning, panelMode, revealedBubbleChars, studioView]);
 
   function applyProgressEvent(event: RunProgressEvent) {
     if (event.type === "status") {
@@ -1499,36 +1665,49 @@ export function CouncilStudio() {
         ))}
       </datalist>
 
-      <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-[90rem] flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6 lg:py-5">
-        <ChamberStage
-          roster={roster}
-          currentFrame={currentFrame}
-          displayedBubbleContent={displayedBubbleContent}
-          chapters={chapters}
-          frames={frames}
-          activeFrameIndex={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
-          totalDurationMs={totalDurationMs}
-          isRunning={isRunning}
-          isBubbleStreaming={isBubbleStreaming}
-          error={error}
-          warnings={result?.warnings ?? []}
-          mode={config.mode}
-          prompt={config.prompt}
-          isPromptReadOnly={isRunning}
-          hasLoadedKey={hasLoadedKey}
-          hasApiKey={hasApiKey}
-          panelMode={panelMode}
-          transcriptMode={transcriptMode}
-          transcriptTurnCount={transcriptTurns.length}
-          transcriptMarkdown={transcriptMarkdown}
-          onOpenSettings={() => setShowSettingsModal(true)}
-          onPanelModeChange={setPanelMode}
-          onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
-          onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
-          onAddMember={addMember}
-          onOpenParticipant={openParticipantEditor}
-          onSelectFrame={selectFrame}
-        />
+      <form onSubmit={handleSubmit} className="studio-form mx-auto flex w-full max-w-[90rem] flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6 lg:py-5">
+        {studioView === "setup" ? (
+          <StudioHero
+            config={config}
+            apiKey={apiKey}
+            hasApiKey={hasApiKey}
+            hasLoadedKey={hasLoadedKey}
+            isRunning={isRunning}
+            onOpenSettings={() => setShowSettingsModal(true)}
+            onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
+            onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
+            onAddMember={addMember}
+            onOpenParticipant={openParticipantEditor}
+          />
+        ) : (
+          <ChamberStage
+            roster={roster}
+            currentFrame={currentFrame}
+            displayedBubbleContent={displayedBubbleContent}
+            chapters={chapters}
+            frames={frames}
+            activeFrameIndex={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
+            totalDurationMs={totalDurationMs}
+            isRunning={isRunning}
+            isBubbleStreaming={isBubbleStreaming}
+            error={error}
+            warnings={result?.warnings ?? []}
+            mode={config.mode}
+            prompt={config.prompt}
+            memberCount={roster.length}
+            hasSessionStarted={studioView === "simulation"}
+            canSubmit={hasLoadedKey && hasApiKey}
+            panelMode={panelMode}
+            transcriptMode={transcriptMode}
+            transcriptTurnCount={transcriptTurns.length}
+            transcriptMarkdown={transcriptMarkdown}
+            onOpenSettings={() => setShowSettingsModal(true)}
+            onEditSetup={() => setStudioView("setup")}
+            onPanelModeChange={setPanelMode}
+            onOpenParticipant={openParticipantEditor}
+            onSelectFrame={selectFrame}
+          />
+        )}
       </form>
 
       {hasLoadedKey && showSettingsModal ? (

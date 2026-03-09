@@ -339,6 +339,300 @@ select {
     radial-gradient(circle at 50% 100%, rgba(80, 140, 148, 0.12), transparent 35%);
 }
 
+.studio-form {
+  position: relative;
+}
+
+.hero-shell {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.hero-grid {
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: minmax(0, 1.5fr) minmax(20rem, 0.9fr);
+}
+
+.hero-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 2rem;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at top left, rgba(240, 171, 105, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 34%),
+    var(--panel-strong);
+  box-shadow:
+    0 24px 80px var(--shadow),
+    inset 0 1px 0 rgba(255, 250, 243, 0.07);
+  backdrop-filter: blur(22px);
+}
+
+.hero-copy-panel,
+.hero-launch-panel,
+.hero-roster-shell {
+  padding: 1.35rem;
+}
+
+.hero-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.hero-title,
+.hero-panel-title {
+  margin: 0;
+  color: var(--foreground);
+}
+
+.hero-title {
+  margin-top: 0.85rem;
+  max-width: 12ch;
+  font-size: clamp(2.6rem, 5vw, 5rem);
+  line-height: 0.94;
+  letter-spacing: -0.05em;
+}
+
+.hero-body,
+.hero-panel-copy {
+  margin: 0;
+  max-width: 42rem;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.hero-body {
+  margin-top: 1rem;
+  font-size: 1.02rem;
+}
+
+.hero-panel-title {
+  margin-top: 0.7rem;
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.hero-panel-copy {
+  margin-top: 0.7rem;
+  font-size: 0.94rem;
+}
+
+.hero-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1.2rem;
+}
+
+.hero-status-row .status-chip {
+  gap: 0.55rem;
+}
+
+.hero-status-row .status-chip strong {
+  color: var(--foreground);
+}
+
+.hero-prompt-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1.35rem;
+}
+
+.hero-prompt-input {
+  min-height: 16rem;
+  resize: vertical;
+  padding: 1.2rem 1.15rem;
+  font-size: 1.04rem;
+  line-height: 1.65;
+}
+
+.hero-launch-panel {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+}
+
+.hero-mode-toggle {
+  width: fit-content;
+}
+
+.hero-stat-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hero-stat-card {
+  display: grid;
+  gap: 0.45rem;
+  border-radius: 1.1rem;
+  border: 1px solid rgba(255, 231, 198, 0.12);
+  background: rgba(255, 248, 237, 0.04);
+  padding: 0.9rem 0.95rem;
+}
+
+.hero-stat-card span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hero-stat-card strong {
+  font-size: 1.1rem;
+  color: var(--foreground);
+}
+
+.hero-launch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 0.2rem;
+}
+
+.hero-play-button {
+  min-width: 12.5rem;
+}
+
+.hero-roster-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.hero-roster-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.hero-roster-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+.hero-roster-card {
+  display: grid;
+  gap: 0.85rem;
+  width: 100%;
+  border-radius: 1.35rem;
+  border: 1px solid rgba(255, 231, 198, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 100%),
+    rgba(255, 248, 237, 0.04);
+  padding: 1rem;
+  text-align: left;
+  color: var(--foreground);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.hero-roster-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(240, 171, 105, 0.3);
+  background:
+    linear-gradient(180deg, rgba(216, 122, 59, 0.12), rgba(255, 248, 237, 0.04)),
+    rgba(255, 248, 237, 0.04);
+  box-shadow: 0 1rem 2rem rgba(2, 5, 8, 0.16);
+}
+
+.hero-roster-card-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.hero-roster-avatar {
+  display: grid;
+  place-items: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  overflow: hidden;
+  border-radius: 1rem;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 243, 227, 0.9), rgba(216, 122, 59, 0.88)),
+    #d87a3b;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 0.75rem 1.25rem rgba(2, 5, 8, 0.18);
+}
+
+.hero-roster-avatar-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #fff8ef;
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.hero-roster-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.hero-roster-role {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.hero-roster-name {
+  margin-top: 0.28rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.hero-roster-model {
+  overflow: hidden;
+  margin-top: 0.16rem;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+}
+
+.hero-roster-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 231, 198, 0.12);
+  background: rgba(255, 248, 237, 0.05);
+  color: var(--muted);
+}
+
+.hero-roster-edit svg {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
+.hero-roster-persona {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.62;
+}
+
 .chamber-shell,
 .settings-sheet {
   border-radius: 2rem;
@@ -366,6 +660,29 @@ select {
 
 .chamber-header-copy {
   min-width: 0;
+}
+
+.chamber-runtime-title {
+  margin: 0.7rem 0 0;
+  font-size: clamp(1.7rem, 2.3vw, 2.4rem);
+  line-height: 1.05;
+  color: var(--foreground);
+}
+
+.chamber-runtime-prompt {
+  margin: 0.8rem 0 0;
+  max-width: 48rem;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.chamber-runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
 }
 
 .chamber-add-button {
@@ -1664,12 +1981,24 @@ select {
 }
 
 @media (max-width: 1180px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
   .settings-modal-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 900px) {
+  .hero-title {
+    max-width: none;
+  }
+
+  .hero-stat-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .cinema-stage {
     min-height: 24rem;
   }
@@ -1725,6 +2054,43 @@ select {
 }
 
 @media (max-width: 640px) {
+  .hero-copy-panel,
+  .hero-launch-panel,
+  .hero-roster-shell {
+    padding: 1rem;
+  }
+
+  .hero-title {
+    font-size: 2.4rem;
+  }
+
+  .hero-body {
+    font-size: 0.96rem;
+  }
+
+  .hero-prompt-input {
+    min-height: 13rem;
+    font-size: 0.98rem;
+  }
+
+  .hero-launch-actions {
+    display: grid;
+  }
+
+  .hero-play-button,
+  .hero-launch-actions .action-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-roster-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chamber-shell {
     padding: 0.8rem;
     border-radius: 1.2rem;
