@@ -61,6 +61,40 @@ select {
   background: rgba(240, 171, 105, 0.3);
 }
 
+html {
+  scrollbar-color: rgba(216, 122, 59, 0.9) rgba(255, 248, 237, 0.08);
+  scrollbar-width: thin;
+}
+
+body::-webkit-scrollbar {
+  width: 0.95rem;
+}
+
+body::-webkit-scrollbar-track {
+  background:
+    linear-gradient(180deg, rgba(255, 248, 237, 0.04), rgba(255, 248, 237, 0.02)),
+    rgba(10, 15, 21, 0.92);
+}
+
+body::-webkit-scrollbar-thumb {
+  border: 3px solid rgba(10, 15, 21, 0.92);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 214, 170, 0.9), rgba(216, 122, 59, 0.92));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 0.35rem 0.8rem rgba(2, 5, 8, 0.28);
+}
+
+body::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, rgba(255, 226, 190, 0.96), rgba(231, 136, 70, 0.96));
+}
+
+body::-webkit-scrollbar-corner {
+  background: rgba(10, 15, 21, 0.92);
+}
+
 .mono {
   font-family: var(--font-mono), monospace;
 }
@@ -231,11 +265,32 @@ select {
   gap: 0.5rem;
 }
 
-.participant-avatar-field {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+.participant-identity-row {
+  display: flex;
+  align-items: flex-start;
   gap: 0.9rem;
-  align-items: center;
+}
+
+.participant-identity-row > label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.participant-avatar-anchor {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.participant-avatar-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 180ms ease;
+}
+
+.participant-avatar-button:hover {
+  transform: translateY(-1px);
 }
 
 .participant-avatar-preview {
@@ -264,10 +319,58 @@ select {
   letter-spacing: 0.08em;
 }
 
-.participant-avatar-field-copy {
+.participant-avatar-popover {
+  position: absolute;
+  top: calc(100% + 0.8rem);
+  left: 0;
+  z-index: 10;
   display: grid;
-  gap: 0.5rem;
-  min-width: 0;
+  gap: 0.8rem;
+  width: min(20rem, calc(100vw - 5rem));
+  padding: 1rem;
+  border-radius: 1.15rem;
+  border: 1px solid rgba(255, 231, 198, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 28%),
+    rgba(10, 15, 21, 0.98);
+  box-shadow:
+    0 1.2rem 2.2rem rgba(2, 5, 8, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.participant-avatar-popover.is-drag-active {
+  border-color: rgba(240, 171, 105, 0.42);
+  background:
+    linear-gradient(180deg, rgba(216, 122, 59, 0.16), rgba(255, 248, 237, 0.04)),
+    rgba(10, 15, 21, 0.98);
+}
+
+.participant-avatar-popover-copy {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.participant-avatar-popover-copy strong {
+  color: var(--foreground);
+  font-size: 0.86rem;
+}
+
+.participant-avatar-popover-copy span {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.participant-avatar-popover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.participant-persona-input {
+  min-height: 10rem;
+  overflow: hidden;
+  resize: none;
 }
 
 .participant-avatar-clear {
@@ -343,15 +446,18 @@ select {
   position: relative;
 }
 
+.studio-form-simulation {
+  min-height: 100vh;
+}
+
+.studio-form-simulation .chamber-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .hero-shell {
   display: grid;
   gap: 1.1rem;
-}
-
-.hero-grid {
-  display: grid;
-  gap: 1.1rem;
-  grid-template-columns: minmax(0, 1.5fr) minmax(20rem, 0.9fr);
 }
 
 .hero-panel {
@@ -370,7 +476,7 @@ select {
 }
 
 .hero-copy-panel,
-.hero-launch-panel,
+.hero-prompt-shell,
 .hero-roster-shell {
   padding: 1.35rem;
 }
@@ -411,6 +517,17 @@ select {
   font-size: 1.02rem;
 }
 
+.hero-copy-stack {
+  display: grid;
+  justify-items: start;
+}
+
+.hero-api-block {
+  display: grid;
+  gap: 0.55rem;
+  justify-items: start;
+}
+
 .hero-panel-title {
   margin-top: 0.7rem;
   font-size: 1.6rem;
@@ -435,6 +552,33 @@ select {
 
 .hero-api-chip {
   padding-right: 0.35rem;
+}
+
+.hero-copy-api {
+  margin-top: 1.15rem;
+  padding: 0.7rem 0.45rem 0.7rem 0.9rem;
+  border: 1px solid rgba(240, 171, 105, 0.24);
+  background:
+    linear-gradient(180deg, rgba(216, 122, 59, 0.14), rgba(255, 248, 237, 0.06)),
+    rgba(255, 248, 237, 0.05);
+  box-shadow: 0 0.9rem 1.6rem rgba(2, 5, 8, 0.14);
+}
+
+.hero-copy-api strong {
+  font-size: 0.94rem;
+}
+
+.hero-api-link {
+  color: var(--accent-strong);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  text-decoration: underline;
+  text-decoration-color: rgba(240, 171, 105, 0.42);
+  text-underline-offset: 0.16em;
+}
+
+.hero-api-link:hover {
+  color: var(--foreground);
 }
 
 .hero-status-row .status-chip strong {
@@ -475,33 +619,77 @@ select {
   margin-top: 1.35rem;
 }
 
+.hero-prompt-input-shell {
+  position: relative;
+}
+
 .hero-prompt-input {
-  min-height: 16rem;
+  min-height: 11rem;
   resize: vertical;
-  padding: 1.2rem 1.15rem;
+  padding: 1.2rem 4.2rem 1.2rem 1.15rem;
   font-size: 1.04rem;
   line-height: 1.65;
 }
 
-.hero-launch-panel {
-  display: grid;
-  align-content: start;
-  gap: 1rem;
+.hero-prompt-wand-button {
+  position: absolute;
+  top: 0.95rem;
+  right: 0.95rem;
+  z-index: 1;
+}
+
+.hero-prompt-wand-button svg {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .hero-mode-toggle {
   width: fit-content;
 }
 
-.hero-launch-actions {
+.hero-selector-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.7rem;
-  margin-top: 0.2rem;
 }
 
-.hero-play-button {
-  min-width: 12.5rem;
+.hero-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.9rem;
+  height: 2.9rem;
+  padding: 0;
+}
+
+.hero-icon-button .action-button-icon {
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0;
+}
+
+.hero-prompt-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.hero-start-button {
+  width: 100%;
+  min-height: 4.5rem;
+  justify-content: center;
+  border-radius: 1.5rem;
+  font-size: 1rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.hero-start-button .action-button-icon {
+  width: 1.1rem;
+  height: 1.1rem;
 }
 
 .hero-roster-shell {
@@ -651,6 +839,8 @@ select {
 }
 
 .chamber-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   padding: 1rem;
 }
 
@@ -724,12 +914,30 @@ select {
 
 .stage-frame {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   border-radius: 1.35rem;
   border: 1px solid rgba(255, 233, 203, 0.08);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 25%),
     linear-gradient(180deg, rgba(21, 31, 42, 0.95) 0%, rgba(10, 15, 21, 0.96) 100%);
+}
+
+.stage-panel-toggle {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 5;
+  box-shadow:
+    0 0.8rem 1.8rem rgba(2, 5, 8, 0.24),
+    inset 0 1px 0 rgba(255, 250, 243, 0.07);
+  backdrop-filter: blur(22px);
+}
+
+.studio-form-simulation .stage-frame {
+  height: 100%;
 }
 
 .stage-settings-button {
@@ -779,9 +987,14 @@ select {
 
 .cinema-stage {
   position: relative;
+  flex: 1 1 auto;
   min-height: 28rem;
   overflow: hidden;
-  padding: 1rem 1rem 2rem;
+  padding: 1rem;
+}
+
+.studio-form-simulation .cinema-stage {
+  min-height: 100%;
 }
 
 .cinema-vignette,
@@ -969,9 +1182,6 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 9.5rem;
-  max-height: min(20rem, calc(100vh - 14rem));
-  overflow-y: auto;
-  overscroll-behavior: contain;
   border-radius: 1.2rem;
   border: 1px solid rgba(255, 231, 198, 0.14);
   background:
@@ -984,29 +1194,21 @@ select {
   animation: bubble-in 340ms cubic-bezier(0.2, 0.75, 0.2, 1);
 }
 
-.speaker-queue-list,
-.stage-bubble-card,
-.speaker-focus-bubble-card {
+.speaker-queue-list {
   scrollbar-width: thin;
   scrollbar-color: rgba(216, 122, 59, 0.72) rgba(255, 248, 237, 0.08);
 }
 
-.speaker-queue-list::-webkit-scrollbar,
-.stage-bubble-card::-webkit-scrollbar,
-.speaker-focus-bubble-card::-webkit-scrollbar {
+.speaker-queue-list::-webkit-scrollbar {
   width: 0.72rem;
 }
 
-.speaker-queue-list::-webkit-scrollbar-track,
-.stage-bubble-card::-webkit-scrollbar-track,
-.speaker-focus-bubble-card::-webkit-scrollbar-track {
+.speaker-queue-list::-webkit-scrollbar-track {
   background: rgba(255, 248, 237, 0.08);
   border-radius: 999px;
 }
 
-.speaker-queue-list::-webkit-scrollbar-thumb,
-.stage-bubble-card::-webkit-scrollbar-thumb,
-.speaker-focus-bubble-card::-webkit-scrollbar-thumb {
+.speaker-queue-list::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
   background:
@@ -1014,9 +1216,7 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 
-.speaker-queue-list::-webkit-scrollbar-thumb:hover,
-.stage-bubble-card::-webkit-scrollbar-thumb:hover,
-.speaker-focus-bubble-card::-webkit-scrollbar-thumb:hover {
+.speaker-queue-list::-webkit-scrollbar-thumb:hover {
   background:
     linear-gradient(180deg, rgba(255, 226, 197, 0.96), rgba(226, 134, 71, 0.92)) padding-box;
 }
@@ -1044,9 +1244,12 @@ select {
 .speaker-queue-shell {
   position: absolute;
   top: 1rem;
+  bottom: 1rem;
   left: 1rem;
   z-index: 5;
-  width: min(19rem, calc(100% - 2rem));
+  display: flex;
+  flex-direction: column;
+  width: min(23rem, calc(100% - 2rem));
   border-radius: 1.2rem;
   border: 1px solid rgba(255, 231, 198, 0.12);
   background:
@@ -1061,7 +1264,7 @@ select {
 
 .speaker-queue-kicker {
   margin: 0 0 0.6rem;
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -1070,8 +1273,9 @@ select {
 
 .speaker-queue-list {
   display: grid;
+  flex: 1 1 auto;
   gap: 0.45rem;
-  max-height: 18rem;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 0.12rem;
 }
@@ -1097,7 +1301,7 @@ select {
 }
 
 .speaker-queue-rank {
-  font-size: 0.64rem;
+  font-size: 0.7rem;
   letter-spacing: 0.08em;
   color: var(--muted);
 }
@@ -1161,7 +1365,7 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.78rem;
+  font-size: 0.88rem;
   font-weight: 700;
 }
 
@@ -1170,7 +1374,7 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-top: 0.14rem;
-  font-size: 0.58rem;
+  font-size: 0.64rem;
   letter-spacing: 0.06em;
   color: rgba(212, 198, 181, 0.78);
 }
@@ -1211,7 +1415,8 @@ select {
   position: relative;
   z-index: 4;
   display: grid;
-  place-items: center;
+  justify-items: center;
+  align-items: start;
   min-height: 25rem;
   padding: 4.75rem 1.5rem 1.5rem;
 }
@@ -1233,7 +1438,7 @@ select {
 .speaker-focus-stack {
   display: grid;
   grid-template-columns: minmax(0, 11rem) minmax(0, 26rem);
-  align-items: center;
+  align-items: start;
   gap: 1.4rem;
   width: 100%;
 }
@@ -1241,6 +1446,7 @@ select {
 .speaker-focus-figure {
   position: relative;
   display: grid;
+  align-self: start;
   justify-items: center;
   gap: 0.85rem;
 }
@@ -1489,13 +1695,14 @@ select {
 
 .timeline-shell {
   border-top: 1px solid rgba(255, 235, 210, 0.08);
-  border-bottom: 1px solid rgba(255, 235, 210, 0.08);
   background: linear-gradient(180deg, rgba(12, 18, 25, 0.9), rgba(10, 15, 21, 0.72));
   padding: 0.8rem 0.95rem 0.9rem;
 }
 
 .speaker-playbar-shell {
   width: 100%;
+  margin-top: auto;
+  border-bottom: 0;
 }
 
 .timeline-controls {
@@ -2022,10 +2229,6 @@ select {
 }
 
 @media (max-width: 1180px) {
-  .hero-grid {
-    grid-template-columns: 1fr;
-  }
-
   .settings-modal-grid {
     grid-template-columns: 1fr;
   }
@@ -2041,7 +2244,7 @@ select {
   }
 
   .speaker-queue-shell {
-    width: min(15rem, calc(100% - 2rem));
+    width: min(18rem, calc(100% - 2rem));
   }
 
   .speaker-focus-shell {
@@ -2092,7 +2295,7 @@ select {
 
 @media (max-width: 640px) {
   .hero-copy-panel,
-  .hero-launch-panel,
+  .hero-prompt-shell,
   .hero-roster-shell {
     padding: 1rem;
   }
@@ -2106,18 +2309,12 @@ select {
   }
 
   .hero-prompt-input {
-    min-height: 13rem;
+    min-height: 9rem;
     font-size: 0.98rem;
   }
 
-  .hero-launch-actions {
-    display: grid;
-  }
-
-  .hero-play-button,
-  .hero-launch-actions .action-button {
+  .hero-selector-actions {
     width: 100%;
-    justify-content: center;
   }
 
   .hero-roster-grid {
@@ -2157,6 +2354,7 @@ select {
 
   .speaker-queue-shell {
     top: 0.75rem;
+    bottom: 0.75rem;
     left: 0.75rem;
     width: calc(100% - 1.5rem);
     padding: 0.7rem;
@@ -2209,9 +2407,8 @@ select {
     font-size: 1.6rem;
   }
 
-  .participant-avatar-field {
-    grid-template-columns: 1fr;
-    justify-items: start;
+  .participant-identity-row {
+    align-items: flex-start;
   }
 
   .participant-avatar-preview {

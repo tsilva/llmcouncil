@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useId, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   MODEL_SUGGESTIONS,
@@ -64,6 +64,14 @@ function maskApiKey(value: string): string {
 
 function kindLabel(kind: CouncilTurn["kind"]): string {
   return kind.replace(/_/g, " ");
+}
+
+function bubbleKindLabel(kind: CouncilTurn["kind"]): string | null {
+  if (kind === "member_turn") {
+    return null;
+  }
+
+  return kindLabel(kind);
 }
 
 function chapterLabelForTurn(turn: CouncilTurn): string {
@@ -250,6 +258,15 @@ function ParticipantAvatar({
   );
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image file."));
+    reader.readAsDataURL(file);
+  });
+}
+
 function FieldShell({
   label,
   hint,
@@ -322,12 +339,48 @@ function PencilGlyph() {
   );
 }
 
-function modeSummary(mode: RunInput["mode"]): string {
+function WandGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 19.5 10-10" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m12.8 5.2 1.1-2.7 1.1 2.7 2.7 1.1-2.7 1.1-1.1 2.7-1.1-2.7-2.7-1.1 2.7-1.1Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m17.8 13.2.7-1.7.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m8.2 16.8.6-1.4.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6Z" />
+    </svg>
+  );
+}
+
+function promptPlaceholder(mode: RunInput["mode"]): string {
   if (mode === "debate") {
-    return "Coordinator opens, members respond in rounds, then the room closes with a synthesis.";
+    return "What question should the council debate from opposing angles?";
   }
 
-  return "Members respond in parallel first, then the coordinator resolves them into a consensus.";
+  return "What question should the council answer together and resolve into consensus?";
+}
+
+const CONTROVERSIAL_DEBATE_TOPICS = [
+  "Should democracies ban anonymous political speech during election season?",
+  "Should public universities charge more for degrees with weak job-market outcomes?",
+  "Should welfare for able-bodied adults require mandatory public service?",
+  "Should governments criminalize street camping even when housing supply is still broken?",
+  "Should companies be allowed to fire employees for off-duty political activism?",
+  "Should police be allowed to use facial recognition in public by default?",
+  "Should judges be elected directly instead of appointed by political institutions?",
+  "Should inheritance above a hard cap be taxed at near-confiscatory rates?",
+  "Should homeschooling require state licensing and periodic ideological neutrality checks?",
+  "Should social media platforms be forced to verify the identity of political influencers?",
+  "Should the voting age be raised for national elections?",
+  "Should journalists face penalties for publishing classified leaks that embarrass the state?",
+];
+
+function generateControversialPrompt(mode: RunInput["mode"]): string {
+  const topic = CONTROVERSIAL_DEBATE_TOPICS[Math.floor(Math.random() * CONTROVERSIAL_DEBATE_TOPICS.length)];
+
+  if (mode === "debate") {
+    return topic;
+  }
+
+  return `Build a practical consensus position on this controversial question: ${topic}`;
 }
 
 function SetupParticipantCard({
@@ -396,21 +449,20 @@ function StudioHero({
   onOpenParticipant: (id: string) => void;
 }) {
   const roster = [config.coordinator, ...config.members];
-  const apiKeyLabel = hasLoadedKey ? (hasApiKey ? maskApiKey(apiKey) : "Required") : "Loading";
+  const apiKeyLabel = hasLoadedKey ? (hasApiKey ? maskApiKey(apiKey) : "OpenRouter key required") : "Loading";
 
   return (
     <section className="hero-shell">
-      <div className="hero-grid">
-        <section className="hero-panel hero-copy-panel">
-          <p className="hero-kicker">LLM Council</p>
+      <section className="hero-panel hero-copy-panel">
+        <div className="hero-copy-stack">
           <h1 className="hero-title">LLM Council</h1>
           <p className="hero-body">
             Choose the prompt, set the council, and launch. Once you hit play, the setup surface clears out and the chamber takes over.
           </p>
 
-          <div className="hero-status-row">
-            <span className="status-chip hero-api-chip">
-              <span>API key</span>
+          <div className="hero-api-block">
+            <span className="status-chip hero-api-chip hero-copy-api">
+              <span>{hasApiKey ? "API key" : "OpenRouter key"}</span>
               <strong className="mono">{apiKeyLabel}</strong>
               <button
                 type="button"
@@ -422,68 +474,26 @@ function StudioHero({
                 <PencilGlyph />
               </button>
             </span>
-            <span className="status-chip">
-              {config.members.length + 1} voices
-            </span>
-            <span className="status-chip">{config.rounds} rounds</span>
-          </div>
 
-          <label className="hero-prompt-panel" htmlFor="hero-council-prompt">
-            <span className="label">Prompt</span>
-            <textarea
-              id="hero-council-prompt"
-              className="field hero-prompt-input"
-              value={config.prompt}
-              onChange={(event) => onPromptChange(event.target.value)}
-              placeholder="What should the council deliberate?"
-            />
-          </label>
-        </section>
-
-        <aside className="hero-panel hero-launch-panel">
-          <div>
-            <p className="hero-kicker">Launch</p>
-            <h2 className="hero-panel-title">Select the run shape</h2>
-            <p className="hero-panel-copy">{modeSummary(config.mode)}</p>
-          </div>
-
-          <div className="mode-toggle hero-mode-toggle">
-            {(["debate", "council"] as const).map((nextMode) => (
-              <button
-                key={nextMode}
-                type="button"
-                onClick={() => onModeChange(nextMode)}
-                className={`mode-toggle-button ${config.mode === nextMode ? "is-selected" : ""}`}
+            {!hasApiKey && hasLoadedKey ? (
+              <a
+                href="https://openrouter.ai/settings/keys"
+                target="_blank"
+                rel="noreferrer"
+                className="hero-api-link"
               >
-                {nextMode}
-              </button>
-            ))}
+                Get an OpenRouter key from OpenRouter
+              </a>
+            ) : null}
           </div>
-
-          <div className="hero-launch-actions">
-            <button
-              type="submit"
-              disabled={isRunning || !canSubmit}
-              className="action-button action-button-primary hero-play-button"
-            >
-              <span className="action-button-icon">
-                <PlayGlyph />
-              </span>
-              {isRunning ? "Running..." : "Play simulation"}
-            </button>
-
-            <button type="button" onClick={onOpenSettings} className="action-button">
-              Run settings
-            </button>
-          </div>
-        </aside>
-      </div>
+        </div>
+      </section>
 
       <section className="hero-panel hero-roster-shell">
         <div className="hero-roster-header">
           <div>
-            <p className="hero-kicker">Council Cast</p>
-            <h2 className="hero-panel-title">Edit the voices before they enter</h2>
+            <p className="hero-kicker">Council Selector</p>
+            <h2 className="hero-panel-title">Select your council members</h2>
           </div>
 
           <button type="button" onClick={onAddMember} className="chamber-add-button">
@@ -502,6 +512,75 @@ function StudioHero({
           ))}
         </div>
       </section>
+
+      <section className="hero-panel hero-prompt-shell">
+        <div className="hero-prompt-header">
+          <div>
+            <p className="hero-kicker">Prompt Configurator</p>
+            <h2 className="hero-panel-title">Define what the council should deliberate</h2>
+          </div>
+
+          <div className="hero-selector-actions">
+            <div className="mode-toggle hero-mode-toggle">
+              {(["debate", "council"] as const).map((nextMode) => (
+                <button
+                  key={nextMode}
+                  type="button"
+                  onClick={() => onModeChange(nextMode)}
+                  className={`mode-toggle-button ${config.mode === nextMode ? "is-selected" : ""}`}
+                >
+                  {nextMode}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="action-button hero-icon-button"
+              aria-label="Run settings"
+              title="Run settings"
+            >
+              <span className="action-button-icon">
+                <SettingsGlyph />
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <label className="hero-prompt-panel" htmlFor="hero-council-prompt">
+          <div className="hero-prompt-input-shell">
+            <button
+              type="button"
+              onClick={() => onPromptChange(generateControversialPrompt(config.mode))}
+              className="icon-circle-button hero-prompt-wand-button"
+              aria-label="Generate a controversial prompt"
+              title="Generate a controversial prompt"
+            >
+              <WandGlyph />
+            </button>
+
+            <textarea
+              id="hero-council-prompt"
+              className="field hero-prompt-input"
+              value={config.prompt}
+              onChange={(event) => onPromptChange(event.target.value)}
+              placeholder={promptPlaceholder(config.mode)}
+            />
+          </div>
+        </label>
+      </section>
+
+      <button
+        type="submit"
+        disabled={isRunning || !canSubmit}
+        className="action-button action-button-primary hero-start-button"
+      >
+        <span className="action-button-icon">
+          <PlayGlyph />
+        </span>
+        {isRunning ? "STARTING..." : "START"}
+      </button>
     </section>
   );
 }
@@ -509,7 +588,6 @@ function StudioHero({
 function ParticipantSettingsSheet({
   roleLabel,
   participant,
-  modelListId,
   showPersonaPresets,
   onChange,
   onClose,
@@ -517,7 +595,6 @@ function ParticipantSettingsSheet({
 }: {
   roleLabel: string;
   participant: ParticipantConfig;
-  modelListId: string;
   showPersonaPresets: boolean;
   onChange: (patch: Partial<ParticipantConfig>) => void;
   onClose: () => void;
@@ -525,8 +602,69 @@ function ParticipantSettingsSheet({
 }) {
   const [sheetView, setSheetView] = useState<"form" | "presets">("form");
   const [personaPresetQuery, setPersonaPresetQuery] = useState("");
+  const [isAvatarEditorOpen, setIsAvatarEditorOpen] = useState(false);
+  const [draftAvatarUrl, setDraftAvatarUrl] = useState(participant.avatarUrl ?? "");
+  const [isAvatarDropActive, setIsAvatarDropActive] = useState(false);
+  const personaTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const avatarEditorRef = useRef<HTMLDivElement | null>(null);
+  const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const deferredPersonaPresetQuery = useDeferredValue(personaPresetQuery);
   const filteredPersonaPresets = filterParticipantPersonaPresets(deferredPersonaPresetQuery);
+
+  useEffect(() => {
+    const textarea = personaTextareaRef.current;
+
+    if (!textarea || sheetView !== "form") {
+      return;
+    }
+
+    textarea.style.height = "0px";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [participant.persona, sheetView]);
+
+  useEffect(() => {
+    if (!isAvatarEditorOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (avatarEditorRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setIsAvatarEditorOpen(false);
+      setIsAvatarDropActive(false);
+      setDraftAvatarUrl(participant.avatarUrl ?? "");
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsAvatarEditorOpen(false);
+        setIsAvatarDropActive(false);
+        setDraftAvatarUrl(participant.avatarUrl ?? "");
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isAvatarEditorOpen, participant.avatarUrl]);
+
+  async function applyAvatarFile(file: File) {
+    if (!file.type.startsWith("image/")) {
+      return;
+    }
+
+    const nextAvatarUrl = await readFileAsDataUrl(file);
+    setDraftAvatarUrl(nextAvatarUrl);
+    onChange({ avatarUrl: nextAvatarUrl });
+    setIsAvatarEditorOpen(false);
+    setIsAvatarDropActive(false);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-[rgba(6,9,12,0.54)] backdrop-blur-sm">
@@ -639,71 +777,154 @@ function ParticipantSettingsSheet({
                 </div>
               ) : null}
 
-              <FieldShell label="Name">
-                <input
-                  className="field"
-                  value={participant.name}
-                  onChange={(event) => onChange({ name: event.target.value })}
-                  placeholder="Council member name"
-                />
-              </FieldShell>
-
-              <FieldShell
-                label="Avatar"
-                hint="Use a local path like /avatars/... or any direct image URL. The UI falls back to initials if the image fails."
-              >
-                <div className="participant-avatar-field">
-                  <ParticipantAvatar
-                    name={participant.name || "Council member"}
-                    avatarUrl={participant.avatarUrl}
-                    className="participant-avatar-preview"
-                    fallbackClassName="participant-avatar-preview-fallback"
-                    imageClassName="avatar-image"
-                    decorative={false}
-                  />
-
-                  <div className="participant-avatar-field-copy">
-                    <input
-                      className="field mono"
-                      value={participant.avatarUrl ?? ""}
-                      onChange={(event) => {
-                        const nextAvatarUrl = event.target.value;
-                        onChange({ avatarUrl: nextAvatarUrl.trim() ? nextAvatarUrl : undefined });
-                      }}
-                      placeholder="/avatars/presets/luis-montenegro.jpg"
+              <div className="participant-identity-row">
+                <div className="participant-avatar-anchor" ref={avatarEditorRef}>
+                  <button
+                    type="button"
+                    className="participant-avatar-button"
+                    onClick={() => {
+                      setDraftAvatarUrl(participant.avatarUrl ?? "");
+                      setIsAvatarEditorOpen((current) => !current);
+                    }}
+                    aria-label="Edit participant avatar"
+                    title="Edit participant avatar"
+                  >
+                    <ParticipantAvatar
+                      name={participant.name || "Council member"}
+                      avatarUrl={participant.avatarUrl}
+                      className="participant-avatar-preview"
+                      fallbackClassName="participant-avatar-preview-fallback"
+                      imageClassName="avatar-image"
+                      decorative={false}
                     />
+                  </button>
 
-                    {participant.avatarUrl ? (
-                      <button
-                        type="button"
-                        className="participant-avatar-clear"
-                        onClick={() => onChange({ avatarUrl: undefined })}
-                      >
-                        Remove avatar
-                      </button>
-                    ) : null}
-                  </div>
+                  {isAvatarEditorOpen ? (
+                    <div
+                      className={`participant-avatar-popover ${isAvatarDropActive ? "is-drag-active" : ""}`}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setIsAvatarDropActive(true);
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          setIsAvatarDropActive(false);
+                        }
+                      }}
+                      onDrop={async (event) => {
+                        event.preventDefault();
+                        setIsAvatarDropActive(false);
+                        const droppedFile = Array.from(event.dataTransfer.files).find((file) => file.type.startsWith("image/"));
+
+                        if (droppedFile) {
+                          await applyAvatarFile(droppedFile);
+                        }
+                      }}
+                    >
+                      <div className="participant-avatar-popover-copy">
+                        <strong>Avatar</strong>
+                        <span>Paste a link, import an image, or drag one here.</span>
+                      </div>
+
+                      <input
+                        className="field mono"
+                        value={draftAvatarUrl}
+                        onChange={(event) => setDraftAvatarUrl(event.target.value)}
+                        placeholder="https://... or /avatars/..."
+                      />
+
+                      <input
+                        ref={avatarFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (file) {
+                            await applyAvatarFile(file);
+                          }
+                          event.target.value = "";
+                        }}
+                      />
+
+                      <div className="participant-avatar-popover-actions">
+                        <button
+                          type="button"
+                          className="action-button"
+                          onClick={() => avatarFileInputRef.current?.click()}
+                        >
+                          Import image
+                        </button>
+
+                        <button
+                          type="button"
+                          className="action-button action-button-primary"
+                          onClick={() => {
+                            const nextAvatarUrl = draftAvatarUrl.trim();
+                            onChange({ avatarUrl: nextAvatarUrl || undefined });
+                            setIsAvatarEditorOpen(false);
+                            setIsAvatarDropActive(false);
+                          }}
+                        >
+                          Apply link
+                        </button>
+
+                        {participant.avatarUrl ? (
+                          <button
+                            type="button"
+                            className="participant-avatar-clear"
+                            onClick={() => {
+                              setDraftAvatarUrl("");
+                              onChange({ avatarUrl: undefined });
+                              setIsAvatarEditorOpen(false);
+                              setIsAvatarDropActive(false);
+                            }}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              </FieldShell>
+
+                <FieldShell label="Name">
+                  <input
+                    className="field"
+                    value={participant.name}
+                    onChange={(event) => onChange({ name: event.target.value })}
+                    placeholder="Council member name"
+                  />
+                </FieldShell>
+              </div>
 
               <FieldShell
                 label="Model"
-                hint="Pick a suggestion or enter any OpenRouter model id."
+                hint="Choose one of the configured OpenRouter models."
               >
-                <input
+                <select
                   className="field mono"
-                  list={modelListId}
                   value={participant.model}
                   onChange={(event) => onChange({ model: event.target.value })}
-                  placeholder="openai/gpt-5.4"
-                />
+                >
+                  {MODEL_SUGGESTIONS.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
               </FieldShell>
 
               <FieldShell label="Persona">
                 <textarea
-                  className="field min-h-40 resize-y"
+                  ref={personaTextareaRef}
+                  className="field participant-persona-input"
                   value={participant.persona}
-                  onChange={(event) => onChange({ persona: event.target.value })}
+                  onChange={(event) => {
+                    event.target.style.height = "0px";
+                    event.target.style.height = `${event.target.scrollHeight}px`;
+                    onChange({ persona: event.target.value });
+                  }}
                   placeholder="How should this participant think and argue?"
                 />
               </FieldShell>
@@ -1045,21 +1266,32 @@ function ChamberStage({
     : isRunning
       ? "to continue"
       : null;
+  const currentBubbleKindLabel = currentFrame ? bubbleKindLabel(currentFrame.kind) : null;
 
   return (
     <section className="chamber-shell">
       <div className="chamber-header">
         <div className="chamber-header-copy">
-          <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">
-            {mode === "debate" ? "Debate Simulation" : "Council Simulation"}
-          </p>
-          <h1 className="chamber-runtime-title">{mode === "debate" ? "Live chamber playback" : "Live consensus playback"}</h1>
+          <h1 className="chamber-runtime-title">{mode === "debate" ? "Live debate" : "Live consensus"}</h1>
           <p className="chamber-runtime-prompt">{prompt.trim() || "No prompt set yet."}</p>
         </div>
       </div>
 
       {hasPlaybackStarted ? (
         <div className="stage-frame">
+          <div className="mode-toggle mode-toggle-compact stage-panel-toggle" aria-label="Stage panel mode">
+            {(["conversation", "transcript"] as const).map((nextPanelMode) => (
+              <button
+                key={nextPanelMode}
+                type="button"
+                onClick={() => onPanelModeChange(nextPanelMode)}
+                className={`mode-toggle-button mode-toggle-button-compact ${panelMode === nextPanelMode ? "is-selected" : ""}`}
+              >
+                {nextPanelMode}
+              </button>
+            ))}
+          </div>
+
           <div className="cinema-stage">
             <div className="cinema-vignette" />
             <div className="council-floor-glow" />
@@ -1148,7 +1380,7 @@ function ChamberStage({
                         <article key={currentFrame.id} className="speaker-focus-bubble-card">
                           <p className="stage-bubble-speaker">
                             {currentFrame.speakerName}
-                            <span>{kindLabel(currentFrame.kind)}</span>
+                            {currentBubbleKindLabel ? <span>{currentBubbleKindLabel}</span> : null}
                           </p>
                           <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
                             {displayedBubbleContent || "\u00a0"}
@@ -1190,62 +1422,49 @@ function ChamberStage({
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
 
-                <div className="timeline-shell speaker-playbar-shell">
-                  <div className="timeline-controls">
-                    <div className="timeline-meta">
-                      <div className="timeline-clock mono">
-                        <span>{formatClock(currentTimeMs)}</span>
-                        <span>/</span>
-                        <span>{formatClock(totalDurationMs)}</span>
-                      </div>
-                    </div>
-
-                    <div className="mode-toggle mode-toggle-compact" aria-label="Stage panel mode">
-                      {(["conversation", "transcript"] as const).map((nextPanelMode) => (
-                        <button
-                          key={nextPanelMode}
-                          type="button"
-                          onClick={() => onPanelModeChange(nextPanelMode)}
-                          className={`mode-toggle-button mode-toggle-button-compact ${panelMode === nextPanelMode ? "is-selected" : ""}`}
-                        >
-                          {nextPanelMode}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="timeline-track-shell">
-                    <div className="timeline-marker-row" aria-hidden="true">
-                      {chapters.map((chapter) => (
-                        <button
-                          key={chapter.id}
-                          type="button"
-                          className="timeline-marker"
-                          style={{
-                            left:
-                              totalDurationMs > 0
-                                ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%`
-                                : "0%",
-                          }}
-                          onClick={() => onSelectFrame(chapter.frameIndex)}
-                          disabled={frames.length === 0}
-                          title={chapter.label}
-                        />
-                      ))}
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(frames.length - 1, 0)}
-                      value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
-                      onChange={(event) => onSelectFrame(Number(event.target.value))}
-                      disabled={frames.length < 2}
-                      className="timeline-slider"
-                      aria-label="Playback timeline"
-                    />
+            <div className="timeline-shell speaker-playbar-shell">
+              <div className="timeline-controls">
+                <div className="timeline-meta">
+                  <div className="timeline-clock mono">
+                    <span>{formatClock(currentTimeMs)}</span>
+                    <span>/</span>
+                    <span>{formatClock(totalDurationMs)}</span>
                   </div>
                 </div>
+              </div>
+
+              <div className="timeline-track-shell">
+                <div className="timeline-marker-row" aria-hidden="true">
+                  {chapters.map((chapter) => (
+                    <button
+                      key={chapter.id}
+                      type="button"
+                      className="timeline-marker"
+                      style={{
+                        left:
+                          totalDurationMs > 0
+                            ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%`
+                            : "0%",
+                      }}
+                      onClick={() => onSelectFrame(chapter.frameIndex)}
+                      disabled={frames.length === 0}
+                      title={chapter.label}
+                    />
+                  ))}
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(frames.length - 1, 0)}
+                  value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
+                  onChange={(event) => onSelectFrame(Number(event.target.value))}
+                  disabled={frames.length < 2}
+                  className="timeline-slider"
+                  aria-label="Playback timeline"
+                />
               </div>
             </div>
           </div>
@@ -1261,7 +1480,6 @@ function ChamberStage({
 }
 
 export function CouncilStudio() {
-  const modelListId = useId();
   const [config, setConfig] = useState<RunInput>(() => createDefaultInput());
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1682,13 +1900,12 @@ export function CouncilStudio() {
 
   return (
     <main className="studio-page">
-      <datalist id={modelListId}>
-        {MODEL_SUGGESTIONS.map((model) => (
-          <option key={model} value={model} />
-        ))}
-      </datalist>
-
-      <form onSubmit={handleSubmit} className="studio-form mx-auto flex w-full max-w-[90rem] flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6 lg:py-5">
+      <form
+        onSubmit={handleSubmit}
+        className={`studio-form flex w-full flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6 lg:py-5 ${
+          studioView === "simulation" ? "studio-form-simulation" : "mx-auto max-w-[90rem]"
+        }`}
+      >
         {studioView === "setup" ? (
           <StudioHero
             config={config}
@@ -1751,7 +1968,6 @@ export function CouncilStudio() {
           key={editableParticipant.id}
           roleLabel={editableParticipant.id === config.coordinator.id ? "Coordinator" : "Council member"}
           participant={editableParticipant}
-          modelListId={modelListId}
           showPersonaPresets={editableParticipant.id !== config.coordinator.id}
           onChange={(patch) => {
             if (editableParticipant.id === config.coordinator.id) {
