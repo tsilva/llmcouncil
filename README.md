@@ -1,9 +1,8 @@
 ## LLM Council
 
-Next.js app for running multi-model council workflows through [OpenRouter](https://openrouter.ai/):
+Next.js app for running multi-model debate workflows through [OpenRouter](https://openrouter.ai/):
 
-- `debate` mode: the coordinator frames the prompt, each member debates in sequence for `N` rounds, then the coordinator synthesizes the discussion.
-- `council` mode: all members answer in parallel from their own personas, then the coordinator produces an equitable middle-ground consensus.
+- `debate` mode: the moderator frames the prompt, each member debates in sequence for `N` rounds, the moderator intervenes between rounds, and the moderator closes with a consensus.
 
 Each participant has:
 

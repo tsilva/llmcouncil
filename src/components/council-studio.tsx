@@ -16,6 +16,7 @@ import {
   type RunResult,
 } from "@/lib/council";
 import { runCouncilWorkflow, type RunProgressEvent } from "@/lib/council-engine";
+import { buildPersonaProfilePreview } from "@/lib/persona-profile";
 import { filterParticipantPersonaPresets, type ParticipantPersonaPreset } from "@/lib/persona-presets";
 
 const OPENROUTER_KEY_STORAGE = "llmcouncil.openrouter.key";
@@ -86,6 +87,10 @@ function chapterLabelForTurn(turn: CouncilTurn): string {
     return "Opening";
   }
 
+  if (turn.kind === "intervention") {
+    return turn.round ? `Intervention after round ${turn.round}` : "Intervention";
+  }
+
   if (turn.kind === "synthesis") {
     return "Synthesis";
   }
@@ -119,15 +124,12 @@ function flattenTurns(result: RunResult | null): CouncilTurn[] {
     return [];
   }
 
-  if (result.mode === "debate") {
-    return [
-      ...(result.opening ? [result.opening] : []),
-      ...(result.rounds?.flatMap((round) => round.turns) ?? []),
-      ...(result.synthesis ? [result.synthesis] : []),
-    ];
-  }
-
-  return [...(result.councilResponses ?? []), ...(result.consensus ? [result.consensus] : [])];
+  return [
+    ...(result.opening ? [result.opening] : []),
+    ...(result.rounds?.flatMap((round) => [...round.turns, ...(round.intervention ? [round.intervention] : [])]) ?? []),
+    ...(result.synthesis ? [result.synthesis] : []),
+    ...(result.consensus ? [result.consensus] : []),
+  ];
 }
 
 function buildPlaybackTimeline(result: RunResult | null): {
@@ -181,37 +183,14 @@ function buildPlaybackTimeline(result: RunResult | null): {
 }
 
 function buildPlannedQueueTurns({
-  mode,
   rounds,
   coordinator,
   members,
 }: {
-  mode: RunInput["mode"];
   rounds: number;
   coordinator: ParticipantConfig;
   members: ParticipantConfig[];
 }): PlannedQueueTurn[] {
-  if (mode === "council") {
-    return [
-      ...members.map((member, index) => ({
-        id: `planned-council-response-${index + 1}`,
-        kind: "council_response" as const,
-        speakerId: member.id,
-        speakerName: member.name,
-        model: member.model,
-        chapterLabel: "Response",
-      })),
-      {
-        id: "planned-consensus",
-        kind: "consensus" as const,
-        speakerId: coordinator.id,
-        speakerName: coordinator.name,
-        model: coordinator.model,
-        chapterLabel: "Consensus",
-      },
-    ];
-  }
-
   const plannedTurns: PlannedQueueTurn[] = [
     {
       id: "planned-opening",
@@ -235,18 +214,43 @@ function buildPlannedQueueTurns({
         chapterLabel: `Round ${round}`,
       });
     });
+
+    if (round < rounds) {
+      plannedTurns.push({
+        id: `planned-intervention-${round}`,
+        kind: "intervention",
+        round,
+        speakerId: coordinator.id,
+        speakerName: coordinator.name,
+        model: coordinator.model,
+        chapterLabel: `Intervention after round ${round}`,
+      });
+    }
   }
 
   plannedTurns.push({
-    id: "planned-synthesis",
-    kind: "synthesis",
+    id: "planned-consensus-debate",
+    kind: "consensus",
     speakerId: coordinator.id,
     speakerName: coordinator.name,
     model: coordinator.model,
-    chapterLabel: "Synthesis",
+    chapterLabel: "Consensus",
   });
 
   return plannedTurns;
+}
+
+function shuffleParticipants(participants: ParticipantConfig[]): ParticipantConfig[] {
+  const next = [...participants];
+
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const current = next[index];
+    next[index] = next[swapIndex] ?? current;
+    next[swapIndex] = current;
+  }
+
+  return next;
 }
 
 function buildQueueEntries({
@@ -476,12 +480,8 @@ function WandGlyph() {
   );
 }
 
-function promptPlaceholder(mode: RunInput["mode"]): string {
-  if (mode === "debate") {
-    return "What question should the council debate from opposing angles?";
-  }
-
-  return "What question should the council answer together and resolve into consensus?";
+function promptPlaceholder(): string {
+  return "What question should the council debate from opposing angles?";
 }
 
 const CONTROVERSIAL_DEBATE_TOPICS = [
@@ -499,14 +499,9 @@ const CONTROVERSIAL_DEBATE_TOPICS = [
   "Should journalists face penalties for publishing classified leaks that embarrass the state?",
 ];
 
-function generateControversialPrompt(mode: RunInput["mode"]): string {
+function generateControversialPrompt(): string {
   const topic = CONTROVERSIAL_DEBATE_TOPICS[Math.floor(Math.random() * CONTROVERSIAL_DEBATE_TOPICS.length)];
-
-  if (mode === "debate") {
-    return topic;
-  }
-
-  return `Build a practical consensus position on this controversial question: ${topic}`;
+  return topic;
 }
 
 function SetupParticipantCard({
@@ -518,7 +513,7 @@ function SetupParticipantCard({
   roleLabel: string;
   onEdit: () => void;
 }) {
-  const personaPreview = participant.persona.trim().replace(/\s+/g, " ");
+  const personaPreview = buildPersonaProfilePreview(participant.personaProfile).trim().replace(/\s+/g, " ");
 
   return (
     <button type="button" className="hero-roster-card" onClick={onEdit} aria-label={`Edit ${participant.name}`}>
@@ -560,7 +555,6 @@ function StudioHero({
   onDraftApiKeyChange,
   onSaveApiKey,
   onOpenSettings,
-  onModeChange,
   onPromptChange,
   onAddMember,
   onOpenParticipant,
@@ -575,7 +569,6 @@ function StudioHero({
   onDraftApiKeyChange: (value: string) => void;
   onSaveApiKey: () => boolean;
   onOpenSettings: () => void;
-  onModeChange: (mode: RunInput["mode"]) => void;
   onPromptChange: (value: string) => void;
   onAddMember: () => void;
   onOpenParticipant: (id: string) => void;
@@ -603,11 +596,6 @@ function StudioHero({
     }
   }
 
-  function handleCancelApiKeyEdit() {
-    onDraftApiKeyChange(apiKey);
-    setIsEditingApiKey(false);
-  }
-
   return (
     <section className="hero-shell">
       <section className="hero-panel hero-copy-panel">
@@ -618,12 +606,15 @@ function StudioHero({
           </p>
 
           <div className="hero-api-block">
-            {isApiKeyEditorVisible ? (
-              <form className="hero-api-editor" onSubmit={handleApiKeySubmit}>
-                <label className="hero-api-editor-field" htmlFor="hero-api-key-input">
-                  <span className="hero-api-editor-label">
-                    {hasApiKey ? "OpenRouter API key" : "Enter your OpenRouter API key"}
-                  </span>
+            <form
+              className={`status-chip hero-api-chip hero-copy-api ${isApiKeyEditorVisible ? "is-editing" : ""}`}
+              onSubmit={handleApiKeySubmit}
+            >
+              <label className="hero-api-editor-field" htmlFor="hero-api-key-input">
+                <span className="hero-api-editor-label">
+                  {hasApiKey ? "OpenRouter API key" : "Enter your OpenRouter API key"}
+                </span>
+                {isApiKeyEditorVisible ? (
                   <input
                     id="hero-api-key-input"
                     ref={apiKeyInputRef}
@@ -634,34 +625,26 @@ function StudioHero({
                     placeholder="sk-or-v1-..."
                     autoComplete="off"
                   />
-                </label>
-
-                <div className="hero-api-editor-actions">
-                  <button type="submit" className="action-button action-button-primary hero-api-save-button">
-                    Save key
-                  </button>
-                  {hasApiKey ? (
-                    <button type="button" onClick={handleCancelApiKeyEdit} className="action-button">
-                      Cancel
-                    </button>
-                  ) : null}
-                </div>
-              </form>
-            ) : (
-              <span className="status-chip hero-api-chip hero-copy-api">
-                <span>{hasApiKey ? "API key" : "OpenRouter key"}</span>
-                <strong className="mono">{apiKeyLabel}</strong>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingApiKey(true)}
-                  className="hero-api-edit-button"
-                  aria-label="Edit API key"
-                  title="Edit API key"
-                >
-                  <PencilGlyph />
-                </button>
-              </span>
-            )}
+                ) : (
+                  <strong className="mono">{apiKeyLabel}</strong>
+                )}
+              </label>
+              <button
+                type={isApiKeyEditorVisible ? "submit" : "button"}
+                onClick={
+                  isApiKeyEditorVisible
+                    ? undefined
+                    : () => {
+                        setIsEditingApiKey(true);
+                      }
+                }
+                className={`hero-api-edit-button ${isApiKeyEditorVisible ? "is-confirm" : ""}`}
+                aria-label={isApiKeyEditorVisible ? "Confirm API key" : "Edit API key"}
+                title={isApiKeyEditorVisible ? "Confirm API key" : "Edit API key"}
+              >
+                {isApiKeyEditorVisible ? "Confirm" : <PencilGlyph />}
+              </button>
+            </form>
 
             {!hasApiKey && hasLoadedKey ? (
               <a
@@ -694,7 +677,7 @@ function StudioHero({
             <SetupParticipantCard
               key={participant.id}
               participant={participant}
-              roleLabel={participant.id === config.coordinator.id ? "Coordinator" : "Council member"}
+              roleLabel={participant.id === config.coordinator.id ? "Moderator" : "Council member"}
               onEdit={() => onOpenParticipant(participant.id)}
             />
           ))}
@@ -709,19 +692,6 @@ function StudioHero({
           </div>
 
           <div className="hero-selector-actions">
-            <div className="mode-toggle hero-mode-toggle">
-              {(["debate", "council"] as const).map((nextMode) => (
-                <button
-                  key={nextMode}
-                  type="button"
-                  onClick={() => onModeChange(nextMode)}
-                  className={`mode-toggle-button ${config.mode === nextMode ? "is-selected" : ""}`}
-                >
-                  {nextMode}
-                </button>
-              ))}
-            </div>
-
             <button
               type="button"
               onClick={onOpenSettings}
@@ -740,7 +710,7 @@ function StudioHero({
           <div className="hero-prompt-input-shell">
             <button
               type="button"
-              onClick={() => onPromptChange(generateControversialPrompt(config.mode))}
+              onClick={() => onPromptChange(generateControversialPrompt())}
               className="icon-circle-button hero-prompt-wand-button"
               aria-label="Generate a controversial prompt"
               title="Generate a controversial prompt"
@@ -753,7 +723,7 @@ function StudioHero({
               className="field hero-prompt-input"
               value={config.prompt}
               onChange={(event) => onPromptChange(event.target.value)}
-              placeholder={promptPlaceholder(config.mode)}
+              placeholder={promptPlaceholder()}
             />
           </div>
         </label>
@@ -870,13 +840,13 @@ function ParticipantSettingsSheet({
   const [draftName, setDraftName] = useState(participant.name);
   const [draftAvatarUrl, setDraftAvatarUrl] = useState(participant.avatarUrl ?? "");
   const [isAvatarDropActive, setIsAvatarDropActive] = useState(false);
-  const personaTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const personaNotesTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const avatarEditorRef = useRef<HTMLDivElement | null>(null);
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const textarea = personaTextareaRef.current;
+    const textarea = personaNotesTextareaRef.current;
 
     if (!textarea) {
       return;
@@ -884,7 +854,7 @@ function ParticipantSettingsSheet({
 
     textarea.style.height = "0px";
     textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [participant.persona]);
+  }, [participant.personaProfile.promptNotes]);
 
   useEffect(() => {
     if (isEditingName) {
@@ -944,11 +914,22 @@ function ParticipantSettingsSheet({
     setIsEditingName(false);
   }
 
+  function updatePersonaProfile(
+    patch: Partial<ParticipantConfig["personaProfile"]>,
+  ) {
+    onChange({
+      personaProfile: {
+        ...participant.personaProfile,
+        ...patch,
+      },
+    });
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-[rgba(6,9,12,0.54)] backdrop-blur-sm">
-      <button type="button" className="flex-1 cursor-default" aria-label="Close member settings" onClick={onClose} />
-      <aside className="settings-sheet w-full max-w-lg border-l border-[color:var(--line)] p-5 sm:p-6">
-        <div className="flex items-start justify-between gap-4">
+    <div className="settings-modal-backdrop participant-modal-backdrop">
+      <button type="button" className="settings-modal-dismiss" aria-label="Close member settings" onClick={onClose} />
+      <section className="settings-sheet participant-modal-panel" role="dialog" aria-modal="true" aria-label="Council member settings">
+        <div className="participant-modal-header">
           <div className="participant-sheet-header">
             <div className="participant-avatar-anchor" ref={avatarEditorRef}>
               <button
@@ -1109,13 +1090,14 @@ function ParticipantSettingsSheet({
             type="button"
             onClick={onClose}
             aria-label="Close member settings"
-            className="icon-circle-button"
+            className="icon-circle-button participant-modal-close"
           >
             <CloseGlyph />
           </button>
         </div>
 
-        <div className="mt-6 grid gap-5">
+        <div className="participant-modal-body">
+          <div className="grid gap-5">
           <FieldShell
             label="Model"
             hint="Choose one of the configured OpenRouter models."
@@ -1133,23 +1115,73 @@ function ParticipantSettingsSheet({
             </select>
           </FieldShell>
 
-          <FieldShell label="Persona">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FieldShell label="Role">
+              <input
+                className="field"
+                value={participant.personaProfile.role}
+                onChange={(event) => updatePersonaProfile({ role: event.target.value })}
+                placeholder="Economist, journalist, minister..."
+              />
+            </FieldShell>
+
+            <FieldShell label="Personality">
+              <input
+                className="field"
+                value={participant.personaProfile.personality}
+                onChange={(event) => updatePersonaProfile({ personality: event.target.value })}
+                placeholder="Calm, confrontational, analytical..."
+              />
+            </FieldShell>
+
+            <FieldShell label="Gender">
+              <input
+                className="field"
+                value={participant.personaProfile.gender}
+                onChange={(event) => updatePersonaProfile({ gender: event.target.value })}
+                placeholder="Optional"
+              />
+            </FieldShell>
+
+            <FieldShell label="Nationality">
+              <input
+                className="field"
+                value={participant.personaProfile.nationality}
+                onChange={(event) => updatePersonaProfile({ nationality: event.target.value })}
+                placeholder="Optional"
+              />
+            </FieldShell>
+
+            <FieldShell label="Birth Date">
+              <input
+                className="field"
+                value={participant.personaProfile.birthDate}
+                onChange={(event) => updatePersonaProfile({ birthDate: event.target.value })}
+                placeholder="Optional"
+              />
+            </FieldShell>
+          </div>
+
+          <FieldShell
+            label="Additional Guidance"
+            hint="Extra instructions that should be stitched into the hidden prompt for this participant."
+          >
             <textarea
-              ref={personaTextareaRef}
+              ref={personaNotesTextareaRef}
               className="field participant-persona-input"
-              value={participant.persona}
+              value={participant.personaProfile.promptNotes}
               onChange={(event) => {
                 event.target.style.height = "0px";
                 event.target.style.height = `${event.target.scrollHeight}px`;
-                onChange({ persona: event.target.value });
+                updatePersonaProfile({ promptNotes: event.target.value });
               }}
-              placeholder="How should this participant think and argue?"
+              placeholder="How should this participant think, speak, and argue?"
             />
           </FieldShell>
-        </div>
+          </div>
 
-        {onRemove ? (
-          <div className="mt-6 border-t border-[color:var(--line)] pt-5">
+          {onRemove ? (
+            <div className="participant-modal-footer">
             <button
               type="button"
               onClick={onRemove}
@@ -1157,9 +1189,10 @@ function ParticipantSettingsSheet({
             >
               Remove from council
             </button>
-          </div>
-        ) : null}
-      </aside>
+            </div>
+          ) : null}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1170,18 +1203,16 @@ function transcriptTurnBody(turn: CouncilTurn): string {
 }
 
 function buildTranscriptMarkdown({
-  mode,
   prompt,
   turns,
   isRunning,
 }: {
-  mode: RunInput["mode"];
   prompt: string;
   turns: CouncilTurn[];
   isRunning: boolean;
 }): string {
   const lines = [
-    `# ${mode === "debate" ? "Debate" : "Council"} Transcript`,
+    `# Debate Transcript`,
     "",
     "## Prompt",
     "",
@@ -1218,31 +1249,17 @@ function buildTranscriptMarkdown({
 }
 
 function StudioSettingsModal({
-  hasApiKey,
-  apiKey,
-  draftApiKey,
   config,
-  onDraftApiKeyChange,
-  onSaveApiKey,
   onClose,
   onConfigChange,
 }: {
-  hasApiKey: boolean;
-  apiKey: string;
-  draftApiKey: string;
   config: RunInput;
-  onDraftApiKeyChange: (value: string) => void;
-  onSaveApiKey: () => void;
   onClose: () => void;
   onConfigChange: (patch: Partial<RunInput>) => void;
 }) {
   return (
     <div className="settings-modal-backdrop">
-      {hasApiKey ? (
-        <button type="button" className="settings-modal-dismiss" aria-label="Close settings" onClick={onClose} />
-      ) : (
-        <div className="settings-modal-dismiss" aria-hidden="true" />
-      )}
+      <button type="button" className="settings-modal-dismiss" aria-label="Close settings" onClick={onClose} />
 
       <section className="settings-sheet settings-modal-panel w-full max-w-3xl p-6 sm:p-7">
         <div className="settings-modal-header">
@@ -1250,52 +1267,16 @@ function StudioSettingsModal({
             <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Council Settings</p>
             <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Room controls and run options</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-[color:var(--ink-soft)]">
-              Manage the local OpenRouter key and adjust the council-wide run settings from one place.
+              Adjust the debate-wide run settings from one place.
             </p>
           </div>
 
-          {hasApiKey ? (
-            <button type="button" onClick={onClose} className="action-button">
-              Close
-            </button>
-          ) : null}
-        </div>
-
-        <div className="settings-stat-grid">
-          <div className="settings-stat-card">
-            <span>API key</span>
-            <strong className="mono">{hasApiKey ? maskApiKey(apiKey) : "Missing"}</strong>
-          </div>
+          <button type="button" onClick={onClose} className="action-button">
+            Close
+          </button>
         </div>
 
         <div className="settings-modal-grid">
-          <div className="settings-modal-stack">
-            <FieldShell
-              label="OpenRouter API Key"
-              hint="Stored locally in this browser. Requests go directly from the client to OpenRouter."
-            >
-              <input
-                className="field mono"
-                type="password"
-                autoFocus={!hasApiKey}
-                value={draftApiKey}
-                onChange={(event) => onDraftApiKeyChange(event.target.value)}
-                placeholder="sk-or-v1-..."
-              />
-            </FieldShell>
-
-            <div className="flex flex-wrap gap-3">
-              <button type="button" onClick={onSaveApiKey} className="action-button action-button-primary">
-                Save key
-              </button>
-              {hasApiKey ? (
-                <button type="button" onClick={onClose} className="action-button">
-                  Done
-                </button>
-              ) : null}
-            </div>
-          </div>
-
           <div className="settings-modal-stack">
             <FieldShell
               label="Shared Directive"
@@ -1311,7 +1292,7 @@ function StudioSettingsModal({
             <div className="settings-number-grid">
               <FieldShell
                 label="Rounds"
-                hint={config.mode === "debate" ? "Each round gives every member one turn." : "Used only in debate mode."}
+                hint="Each round gives every member one turn."
               >
                 <input
                   className="field"
@@ -1366,28 +1347,37 @@ function TranscriptPanel({
   thinkingSpeakerName?: string | null;
 }) {
   const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
 
-  useEffect(() => {
+  function updateTranscriptScrollLock() {
     const body = transcriptBodyRef.current;
     if (!body) {
       return;
     }
 
-    body.scrollTop = body.scrollHeight;
+    const distanceFromBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom <= 24;
+  }
+
+  useEffect(() => {
+    const body = transcriptBodyRef.current;
+    if (!body || !shouldStickToBottomRef.current) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const currentBody = transcriptBodyRef.current;
+      if (!currentBody || !shouldStickToBottomRef.current) {
+        return;
+      }
+
+      currentBody.scrollTop = currentBody.scrollHeight;
+    });
   }, [markdown]);
 
   return (
     <article className="transcript-sheet transcript-sheet-inline">
-      <div className="transcript-sheet-header">
-        <div className="transcript-sheet-actions">
-          <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
-            <span className="transcript-status-dot" />
-            {isRunning ? (thinkingSpeakerName ? `Thinking: ${thinkingSpeakerName}` : "Thinking...") : `${turnCount} turns`}
-          </span>
-        </div>
-      </div>
-
-      <div ref={transcriptBodyRef} className="transcript-sheet-body">
+      <div ref={transcriptBodyRef} className="transcript-sheet-body" onScroll={updateTranscriptScrollLock}>
         <ReactMarkdown
           components={{
             h1: ({ children }) => <h1 className="transcript-markdown-h1">{children}</h1>,
@@ -1403,6 +1393,15 @@ function TranscriptPanel({
         >
           {markdown}
         </ReactMarkdown>
+
+        <div className="transcript-sheet-footer">
+          <div className="transcript-sheet-actions transcript-sheet-actions-footer">
+            <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
+              <span className="transcript-status-dot" />
+              {isRunning ? (thinkingSpeakerName ? `Thinking: ${thinkingSpeakerName}` : "Thinking...") : `${turnCount} turns`}
+            </span>
+          </div>
+        </div>
       </div>
     </article>
   );
@@ -1421,7 +1420,6 @@ function ChamberStage({
   isBubbleStreaming,
   error,
   warnings,
-  mode,
   prompt,
   hasSessionStarted,
   panelMode,
@@ -1447,7 +1445,6 @@ function ChamberStage({
   isBubbleStreaming: boolean;
   error: string | null;
   warnings: string[];
-  mode: RunInput["mode"];
   prompt: string;
   hasSessionStarted: boolean;
   panelMode: StagePanelMode;
@@ -1462,7 +1459,6 @@ function ChamberStage({
   onSelectFrame: (index: number) => void;
 }) {
   const plannedQueueTurns = buildPlannedQueueTurns({
-    mode,
     rounds: plannedRounds,
     coordinator: roster[0] ?? createDefaultInput().coordinator,
     members: roster.slice(1),
@@ -1481,7 +1477,7 @@ function ChamberStage({
     null;
 
   const hasPlaybackStarted = hasSessionStarted || isRunning || frames.length > 0;
-  const canConfigureActiveSpeaker = Boolean(focusSpeaker) && mode !== "debate";
+  const canConfigureActiveSpeaker = false;
   const canGoPrevious = activeFrameIndex > 0;
   const canGoNext = activeFrameIndex < frames.length - 1;
   const isPlayButtonActive = isPlaybackPlaying && (isRunning || canGoNext || isBubbleStreaming);
@@ -1489,7 +1485,7 @@ function ChamberStage({
     <section className="chamber-shell">
       <div className="chamber-header">
         <div className="chamber-header-copy">
-          <h1 className="chamber-runtime-title">{mode === "debate" ? "Live debate" : "Live consensus"}</h1>
+          <h1 className="chamber-runtime-title">Live debate</h1>
           <p className="chamber-runtime-prompt">{prompt.trim() || "No prompt set yet."}</p>
         </div>
         {hasPlaybackStarted ? (
@@ -1511,66 +1507,65 @@ function ChamberStage({
       </div>
 
       {hasPlaybackStarted ? (
-        <div className="stage-frame">
-          <div className="cinema-stage">
-            <div className="cinema-vignette" />
-            <div className="council-floor-glow" />
-
+        <div className={`stage-frame ${panelMode === "transcript" ? "stage-frame-transcript" : ""}`}>
+          <div className={`cinema-stage ${panelMode === "transcript" ? "cinema-stage-transcript" : ""}`}>
             {panelMode === "conversation" ? (
-              <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
-                <p className="speaker-queue-kicker">Up next</p>
-                <div className="speaker-queue-list">
-                  {queueEntries.length > 0 ? (
-                    queueEntries.map(({ id, participant, state, frameIndex, speakerName, model, chapterLabel }, index) => (
-                      <button
-                        key={id}
-                        type="button"
-                        className={`speaker-queue-item is-${state}`}
-                        onClick={() => {
-                          if (frameIndex !== null) {
-                            onSelectFrame(frameIndex);
-                          }
-                        }}
-                        disabled={frameIndex === null}
-                        aria-label={`${state === "active" ? "Current" : state === "thinking" ? "Thinking" : "Upcoming"} turn: ${speakerName}`}
-                      >
-                      <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
-                      <ParticipantAvatar
-                        name={speakerName}
-                        avatarUrl={participant?.avatarUrl}
-                        className="speaker-queue-avatar"
-                        fallbackClassName="speaker-queue-avatar-fallback"
-                      />
-                      <span className="speaker-queue-copy">
-                        <span className="speaker-queue-name">{speakerName}</span>
-                        <span className="speaker-queue-model mono">
-                            {chapterLabel} · {participant?.model ?? model}
+              <>
+                <div className="cinema-vignette" />
+                <div className="council-floor-glow" />
+                <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
+                  <p className="speaker-queue-kicker">Up next</p>
+                  <div className="speaker-queue-list">
+                    {queueEntries.length > 0 ? (
+                      queueEntries.map(({ id, participant, state, frameIndex, speakerName, model, chapterLabel }, index) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`speaker-queue-item is-${state}`}
+                          onClick={() => {
+                            if (frameIndex !== null) {
+                              onSelectFrame(frameIndex);
+                            }
+                          }}
+                          disabled={frameIndex === null}
+                          aria-label={`${state === "active" ? "Current" : state === "thinking" ? "Thinking" : "Upcoming"} turn: ${speakerName}`}
+                        >
+                        <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
+                        <ParticipantAvatar
+                          name={speakerName}
+                          avatarUrl={participant?.avatarUrl}
+                          className="speaker-queue-avatar"
+                          fallbackClassName="speaker-queue-avatar-fallback"
+                        />
+                        <span className="speaker-queue-copy">
+                          <span className="speaker-queue-name">{speakerName}</span>
+                          <span className="speaker-queue-model mono">
+                              {chapterLabel} · {participant?.model ?? model}
+                            </span>
                           </span>
-                        </span>
-                        <span className={`speaker-queue-state speaker-queue-state-${state}`}>
-                          {state === "active" ? "active" : state === "thinking" ? "thinking" : "ready"}
-                        </span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="speaker-queue-empty">
-                      {isRunning ? "Wrapping up the final turn." : `${mode === "debate" ? "Debate" : "Council"} complete.`}
-                    </div>
-                  )}
-                </div>
-              </aside>
+                          <span className={`speaker-queue-state speaker-queue-state-${state}`}>
+                            {state === "active" ? "active" : state === "thinking" ? "thinking" : "ready"}
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="speaker-queue-empty">{isRunning ? "Wrapping up the final turn." : "Debate complete."}</div>
+                    )}
+                  </div>
+                </aside>
+              </>
             ) : null}
 
-            <div className={`speaker-focus-shell ${panelMode === "transcript" ? "speaker-focus-shell-transcript" : ""}`}>
-              <div className="speaker-focus-content">
-                {panelMode === "transcript" ? (
-                  <TranscriptPanel
-                    turnCount={transcriptTurnCount}
-                    isRunning={isRunning}
-                    markdown={transcriptMarkdown}
-                    thinkingSpeakerName={thinkingEntry?.speakerName ?? null}
-                  />
-                ) : (
+            {panelMode === "transcript" ? (
+              <TranscriptPanel
+                turnCount={transcriptTurnCount}
+                isRunning={isRunning}
+                markdown={transcriptMarkdown}
+                thinkingSpeakerName={thinkingEntry?.speakerName ?? null}
+              />
+            ) : (
+              <div className="speaker-focus-shell">
+                <div className="speaker-focus-content">
                   <div className="speaker-focus-stack">
                     <div className="speaker-focus-figure">
                       {canConfigureActiveSpeaker && focusSpeaker ? (
@@ -1632,9 +1627,9 @@ function ChamberStage({
                       )}
                     </div>
                   </div>
-                )}
+                </div>
               </div>
-            </div>
+            )}
 
             {panelMode === "conversation" ? (
               <div className="timeline-shell speaker-playbar-shell">
@@ -1740,11 +1735,9 @@ export function CouncilStudio() {
   const hasApiKey = apiKey.trim().length > 0;
   const hasPrompt = config.prompt.trim().length > 0;
   const transcriptTurns = flattenTurns(result);
-  const transcriptMode = result?.mode ?? config.mode;
   const transcriptPrompt = result?.prompt ?? config.prompt;
   const transcriptMarkdown = useDeferredValue(
     buildTranscriptMarkdown({
-      mode: transcriptMode,
       prompt: transcriptPrompt,
       turns: transcriptTurns,
       isRunning,
@@ -1897,7 +1890,7 @@ export function CouncilStudio() {
           ...createMember(current.members.length + 1),
           name: preset.name,
           model: DEFAULT_PRESET_MODEL,
-          persona: preset.persona,
+          personaProfile: { ...preset.personaProfile },
           avatarUrl: preset.avatarUrl,
         },
       ],
@@ -1994,19 +1987,24 @@ export function CouncilStudio() {
     setRevealedBubbleId(null);
     setRevealedBubbleChars(0);
     setFrameCompletedAt(null);
+    const payload: RunInput = {
+      ...config,
+      mode: "debate",
+      members: shuffleParticipants(config.members),
+    };
+
     setResult({
-      mode: config.mode,
-      prompt: config.prompt,
-      roster: createRosterSnapshot(config),
-      rounds: config.mode === "debate" ? [] : undefined,
-      councilResponses: config.mode === "council" ? [] : undefined,
+      mode: payload.mode,
+      prompt: payload.prompt,
+      roster: createRosterSnapshot(payload),
+      rounds: [],
       usage: emptyUsage(),
       warnings: [],
     });
     setIsRunning(true);
 
     try {
-      const payload = await runCouncilWorkflow(config, {
+      const resultPayload = await runCouncilWorkflow(payload, {
         apiKey,
         siteUrl: window.location.origin,
         onProgress: (progressEvent) => {
@@ -2014,7 +2012,7 @@ export function CouncilStudio() {
         },
       });
 
-      setResult(payload);
+      setResult(resultPayload);
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "The council run failed.");
     } finally {
@@ -2129,11 +2127,22 @@ export function CouncilStudio() {
             rounds: [...existingRounds, { round: event.turn.round ?? 1, turns: [event.turn] }],
           };
         }
-        case "council_response":
+        case "intervention": {
+          const existingRounds = next.rounds ?? [];
+          const index = existingRounds.findIndex((round) => round.round === event.turn.round);
+
+          if (index >= 0) {
+            const updatedRounds = existingRounds.map((round, roundIndex) =>
+              roundIndex === index ? { ...round, intervention: event.turn } : round,
+            );
+            return { ...next, rounds: updatedRounds };
+          }
+
           return {
             ...next,
-            councilResponses: [...(next.councilResponses ?? []), event.turn],
+            rounds: [...existingRounds, { round: event.turn.round ?? 1, turns: [], intervention: event.turn }],
           };
+        }
         case "synthesis":
           return { ...next, synthesis: event.turn };
         case "consensus":
@@ -2162,14 +2171,13 @@ export function CouncilStudio() {
             onDraftApiKeyChange={setDraftApiKey}
             onSaveApiKey={saveApiKey}
             onOpenSettings={() => setShowSettingsModal(true)}
-            onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
             onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
             onAddMember={() => setShowPersonaSelectorModal(true)}
             onOpenParticipant={openParticipantEditor}
           />
         ) : (
           <ChamberStage
-            roster={roster}
+            roster={result?.roster ?? roster}
             plannedRounds={config.rounds}
             currentFrame={currentFrame}
             displayedBubbleContent={displayedBubbleContent}
@@ -2181,7 +2189,6 @@ export function CouncilStudio() {
             isBubbleStreaming={isBubbleStreaming}
             error={error}
             warnings={result?.warnings ?? []}
-            mode={config.mode}
             prompt={config.prompt}
             hasSessionStarted={studioView === "simulation"}
             panelMode={panelMode}
@@ -2200,14 +2207,8 @@ export function CouncilStudio() {
 
       {hasLoadedKey && showSettingsModal ? (
         <StudioSettingsModal
-          hasApiKey={hasApiKey}
-          apiKey={apiKey}
-          draftApiKey={draftApiKey}
           config={config}
-          onDraftApiKeyChange={setDraftApiKey}
-          onSaveApiKey={saveApiKey}
           onClose={() => {
-            setDraftApiKey(apiKey);
             setShowSettingsModal(false);
           }}
           onConfigChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
@@ -2227,7 +2228,7 @@ export function CouncilStudio() {
       {editableParticipant ? (
         <ParticipantSettingsSheet
           key={editableParticipant.id}
-          roleLabel={editableParticipant.id === config.coordinator.id ? "Coordinator" : "Council member"}
+          roleLabel={editableParticipant.id === config.coordinator.id ? "Moderator" : "Council member"}
           participant={editableParticipant}
           onChange={(patch) => {
             if (editableParticipant.id === config.coordinator.id) {

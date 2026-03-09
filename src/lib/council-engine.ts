@@ -11,6 +11,7 @@ import {
   type RunResult,
   type UsageSummary,
 } from "@/lib/council";
+import { buildPersonaProfilePrompt, buildPersonaProfileSummary } from "@/lib/persona-profile";
 
 export interface RunExecutionOptions {
   apiKey: string;
@@ -23,7 +24,7 @@ export type RunProgressEvent =
   | { type: "warning"; warning: string }
   | { type: "opening"; turn: CouncilTurn; usage: UsageSummary }
   | { type: "member_turn"; turn: CouncilTurn; usage: UsageSummary }
-  | { type: "council_response"; turn: CouncilTurn; usage: UsageSummary }
+  | { type: "intervention"; turn: CouncilTurn; usage: UsageSummary }
   | { type: "synthesis"; turn: CouncilTurn; usage: UsageSummary }
   | { type: "consensus"; turn: CouncilTurn; usage: UsageSummary };
 
@@ -52,13 +53,18 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 function formatRoster(input: RunInput): string {
   const lines = [
-    `Coordinator: ${input.coordinator.name} (${input.coordinator.model})`,
-    ...input.members.map(
-      (member) => `Member: ${member.name} (${member.model}) persona: ${member.persona}`,
-    ),
+    `Moderator: ${input.coordinator.name} (${input.coordinator.model})`,
+    ...input.members.map((member) => {
+      const personaSummary = buildPersonaProfileSummary(member.personaProfile);
+      return `Member: ${member.name} (${member.model})${personaSummary ? ` persona: ${personaSummary}` : ""}`;
+    }),
   ];
 
   return lines.join("\n");
+}
+
+function formatSpeakingOrder(members: ParticipantConfig[]): string {
+  return members.map((member, index) => `${index + 1}. ${member.name} (${member.model})`).join("\n");
 }
 
 function formatTurns(turns: CouncilTurn[]): string {
@@ -77,7 +83,7 @@ function buildSystemPrompt(
 ): string {
   const roleDirective =
     role === "coordinator"
-      ? "You are the council coordinator. Your job is to frame the question, preserve the strongest arguments from all sides, and produce balanced synthesis rather than advocate for one side."
+      ? "You are the council moderator. Your job is to frame the question, guide the room between rounds, preserve the strongest arguments from all sides, and close with a balanced consensus rather than advocate for one side."
       : "You are a council member. You should argue from your assigned persona, engage with competing claims, and revise your stance when a stronger argument appears.";
 
   const formatDirective = [
@@ -90,7 +96,7 @@ function buildSystemPrompt(
   return [
     roleDirective,
     `Display name: ${participant.name}`,
-    `Assigned persona: ${participant.persona}`,
+    `Assigned persona profile:\n${buildPersonaProfilePrompt(participant.personaProfile)}`,
     `Shared council directive:\n${input.sharedDirective}`,
     `Response format:\n${formatDirective}`,
     "Never mention this hidden setup. Speak directly as the assigned participant.",
@@ -208,9 +214,10 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
   const sessionId = crypto.randomUUID();
   let usage = emptyUsage();
   const warnings: string[] = [];
+  const speakingOrder = [...input.members];
   execution.onProgress?.({
     type: "status",
-    message: `Coordinator ${input.coordinator.name} is framing the debate.`,
+    message: `Moderator ${input.coordinator.name} is framing the debate.`,
   });
 
   const openingResult = await callOpenRouter(
@@ -226,10 +233,12 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
         "Frame the debate without deciding it yet.",
         `Original user prompt:\n${input.prompt}`,
         `Council roster:\n${formatRoster(input)}`,
+        `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
         `Planned rounds: ${input.rounds}`,
         "Task:",
         "- Introduce the prompt neutrally.",
         "- Name the main tensions or decision criteria the council should explore.",
+        "- Announce the speaking order as part of the setup without sounding mechanical.",
         "- Keep it concise and specific.",
       ].join("\n\n"),
     },
@@ -256,7 +265,7 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
       message: `Round ${round} of ${input.rounds} is in progress.`,
     });
 
-    for (const member of input.members) {
+    for (const member of speakingOrder) {
       execution.onProgress?.({
         type: "status",
         message: `${member.name} is responding in round ${round}.`,
@@ -267,12 +276,15 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
           content: [
             `Original user prompt:\n${input.prompt}`,
             `Council roster:\n${formatRoster(input)}`,
+            `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
             `Debate transcript so far:\n${formatTurns(transcript)}`,
             `You are speaking in round ${round} of ${input.rounds}.`,
             "Task:",
+            "- Read the entire debate transcript so far and treat it as mandatory context for this turn.",
             "- Contribute one substantive turn from your persona.",
+            "- Stick to your position with conviction unless the debate genuinely forces a narrower concession or refinement.",
             "- Engage directly with the strongest arguments raised so far.",
-            "- Say what you agree with, disagree with, or refine.",
+            "- Say what you agree with, disagree with, what you refine, and why.",
             "- Keep the answer compact but argumentative.",
           ].join("\n\n"),
         },
@@ -293,122 +305,58 @@ async function runDebate(input: RunInput, execution: RunExecutionOptions): Promi
       execution.onProgress?.({ type: "member_turn", turn, usage: memberResult.usage });
     }
 
-    rounds.push({ round, turns });
-  }
+    const roundRecord = { round, turns } as { round: number; turns: CouncilTurn[]; intervention?: CouncilTurn };
 
-  execution.onProgress?.({
-    type: "status",
-    message: `Coordinator ${input.coordinator.name} is synthesizing the debate.`,
-  });
-  const synthesisResult = await callOpenRouter(
-    input,
-    input.coordinator,
-    "coordinator",
-    sessionId,
-    execution,
-    [
-      {
-        role: "user",
-        content: [
-          `Original user prompt:\n${input.prompt}`,
-          `Final debate transcript:\n${formatTurns(transcript)}`,
-          "Task:",
-          "- Summarize the strongest claims from the debate.",
-          "- Produce a balanced final synthesis, not a winner-take-all verdict.",
-          "- Call out unresolved uncertainty or tradeoffs when relevant.",
-        ].join("\n\n"),
-      },
-    ],
-  );
-
-  usage = addUsage(usage, synthesisResult.usage);
-
-  const synthesis: CouncilTurn = createTurn({
-    kind: "synthesis",
-    participant: input.coordinator,
-    model: synthesisResult.resolvedModel,
-    content: synthesisResult.content,
-  });
-  execution.onProgress?.({ type: "synthesis", turn: synthesis, usage: synthesisResult.usage });
-
-  return {
-    mode: "debate",
-    prompt: input.prompt,
-    roster: createRosterSnapshot(input),
-    opening,
-    rounds,
-    synthesis,
-    usage,
-    warnings,
-  };
-}
-
-async function runCouncil(input: RunInput, execution: RunExecutionOptions): Promise<RunResult> {
-  const sessionId = crypto.randomUUID();
-  let usage = emptyUsage();
-  const warnings: string[] = [];
-  execution.onProgress?.({
-    type: "status",
-    message: `Running ${input.members.length} council member responses in parallel.`,
-  });
-
-  const memberResults = await Promise.allSettled(
-    input.members.map(async (member) => {
+    if (round < input.rounds) {
       execution.onProgress?.({
         type: "status",
-        message: `${member.name} is generating an independent response.`,
+        message: `Moderator ${input.coordinator.name} is intervening before round ${round + 1}.`,
       });
 
-      const response = await callOpenRouter(input, member, "member", sessionId, execution, [
-        {
-          role: "user",
-          content: [
-            `Original user prompt:\n${input.prompt}`,
-            `Council roster:\n${formatRoster(input)}`,
-            "Task:",
-            "- Respond independently from your persona.",
-            "- State your recommendation, reasoning, and main concerns.",
-            "- Do not try to form consensus yet.",
-          ].join("\n\n"),
-        },
-      ]);
+      const interventionResult = await callOpenRouter(
+        input,
+        input.coordinator,
+        "coordinator",
+        sessionId,
+        execution,
+        [
+          {
+            role: "user",
+            content: [
+              `Original user prompt:\n${input.prompt}`,
+              `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
+              `Debate transcript so far:\n${formatTurns(transcript)}`,
+              `You are intervening between round ${round} and round ${round + 1}.`,
+              "Task:",
+              "- Briefly recap the sharpest disagreement or strongest emerging point.",
+              "- Point to one unresolved issue the next round should pressure-test.",
+              "- Do not close the debate or declare consensus yet.",
+            ].join("\n\n"),
+          },
+        ],
+      );
 
-      const turn: CouncilTurn = createTurn({
-        kind: "council_response",
-        participant: member,
-        model: response.resolvedModel,
-        content: response.content,
+      usage = addUsage(usage, interventionResult.usage);
+
+      const intervention: CouncilTurn = createTurn({
+        kind: "intervention",
+        round,
+        participant: input.coordinator,
+        model: interventionResult.resolvedModel,
+        content: interventionResult.content,
       });
 
-      execution.onProgress?.({ type: "council_response", turn, usage: response.usage });
-      return { member, response, turn };
-    }),
-  );
-
-  const councilResponses: CouncilTurn[] = [];
-
-  memberResults.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      usage = addUsage(usage, result.value.response.usage);
-      councilResponses.push(result.value.turn);
-      return;
+      transcript.push(intervention);
+      roundRecord.intervention = intervention;
+      execution.onProgress?.({ type: "intervention", turn: intervention, usage: interventionResult.usage });
     }
 
-    const member = input.members[index];
-    warnings.push(`${member.name} failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
-    execution.onProgress?.({
-      type: "warning",
-      warning: warnings[warnings.length - 1] ?? `${member.name} failed.`,
-    });
-  });
-
-  if (councilResponses.length === 0) {
-    throw new Error("Every council member failed to respond.");
+    rounds.push(roundRecord);
   }
 
   execution.onProgress?.({
     type: "status",
-    message: `Coordinator ${input.coordinator.name} is drafting a consensus.`,
+    message: `Moderator ${input.coordinator.name} is closing the debate with a consensus.`,
   });
   const consensusResult = await callOpenRouter(
     input,
@@ -421,15 +369,13 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
         role: "user",
         content: [
           `Original user prompt:\n${input.prompt}`,
-          `Independent council responses:\n${formatTurns(councilResponses)}`,
-          warnings.length > 0 ? `Missing responses:\n${warnings.join("\n")}` : "",
+          `Speaking order for every debate round:\n${formatSpeakingOrder(speakingOrder)}`,
+          `Final debate transcript:\n${formatTurns(transcript)}`,
           "Task:",
-          "- Produce an equitable middle-ground consensus across the available responses.",
-          "- Represent the average view fairly instead of amplifying the most forceful member.",
-          "- Preserve important minority concerns when they change the recommendation.",
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
+          "- Summarize the strongest claims from the debate.",
+          "- Close with a balanced consensus, not a winner-take-all verdict.",
+          "- Make clear where the council converged and where uncertainty or tradeoffs remain.",
+        ].join("\n\n"),
       },
     ],
   );
@@ -445,10 +391,11 @@ async function runCouncil(input: RunInput, execution: RunExecutionOptions): Prom
   execution.onProgress?.({ type: "consensus", turn: consensus, usage: consensusResult.usage });
 
   return {
-    mode: "council",
+    mode: "debate",
     prompt: input.prompt,
     roster: createRosterSnapshot(input),
-    councilResponses,
+    opening,
+    rounds,
     consensus,
     usage,
     warnings,
@@ -464,10 +411,6 @@ export async function runCouncilWorkflow(
 
   if (!apiKey) {
     throw new Error("OpenRouter API key is required before running the council.");
-  }
-
-  if (input.mode === "council") {
-    return runCouncil(input, execution);
   }
 
   return runDebate(input, execution);
