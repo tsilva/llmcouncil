@@ -44,6 +44,8 @@ type TimelineChapter = {
   timestampMs: number;
 };
 
+type StagePanelMode = "conversation" | "transcript";
+
 function maskApiKey(value: string): string {
   if (value.length <= 10) {
     return "Saved";
@@ -76,20 +78,19 @@ function chapterLabelForTurn(turn: CouncilTurn): string {
   return kindLabel(turn.kind);
 }
 
-function formatClock(valueMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(valueMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
-
 function frameDuration(content: string): number {
   return Math.min(4200, Math.max(1400, 900 + content.length * 22));
 }
 
 function bubbleRevealIncrement(content: string): number {
   return Math.max(2, Math.ceil(content.length / 42));
+}
+
+function formatClock(valueMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(valueMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function flattenTurns(result: RunResult | null): CouncilTurn[] {
@@ -172,6 +173,43 @@ function participantInitials(name: string): string {
   return parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
 }
 
+function ParticipantAvatar({
+  name,
+  avatarUrl,
+  className,
+  fallbackClassName,
+  imageClassName,
+  decorative = true,
+}: {
+  name: string;
+  avatarUrl?: string;
+  className: string;
+  fallbackClassName?: string;
+  imageClassName?: string;
+  decorative?: boolean;
+}) {
+  const normalizedAvatarUrl = avatarUrl?.trim();
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  const showImage = Boolean(normalizedAvatarUrl) && failedAvatarUrl !== normalizedAvatarUrl;
+
+  return (
+    <span className={className} aria-hidden={decorative}>
+      {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          className={imageClassName ?? "avatar-image"}
+          src={normalizedAvatarUrl}
+          alt={decorative ? "" : `${name} avatar`}
+          loading="lazy"
+          onError={() => setFailedAvatarUrl(normalizedAvatarUrl ?? null)}
+        />
+      ) : (
+        <span className={fallbackClassName ?? "avatar-fallback"}>{participantInitials(name)}</span>
+      )}
+    </span>
+  );
+}
+
 function FieldShell({
   label,
   hint,
@@ -199,15 +237,6 @@ function SettingsGlyph() {
         d="M10.5 3.4h3l.5 2.2a7.8 7.8 0 0 1 1.6.9l2.1-.9 2.1 2.1-.9 2.1c.35.5.65 1.03.9 1.6l2.2.5v3l-2.2.5a7.8 7.8 0 0 1-.9 1.6l.9 2.1-2.1 2.1-2.1-.9c-.5.35-1.03.65-1.6.9l-.5 2.2h-3l-.5-2.2a7.8 7.8 0 0 1-1.6-.9l-2.1.9-2.1-2.1.9-2.1a7.8 7.8 0 0 1-.9-1.6l-2.2-.5v-3l2.2-.5c.24-.57.54-1.1.9-1.6l-.9-2.1 2.1-2.1 2.1.9a7.8 7.8 0 0 1 1.6-.9l.5-2.2Z"
       />
       <circle cx="12" cy="12" r="3.1" />
-    </svg>
-  );
-}
-
-function TranscriptGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 5.5h12M6 10.5h12M6 15.5h7" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.75h14A1.25 1.25 0 0 1 20.25 5v14A1.25 1.25 0 0 1 19 20.25H5A1.25 1.25 0 0 1 3.75 19V5A1.25 1.25 0 0 1 5 3.75Z" />
     </svg>
   );
 }
@@ -310,7 +339,10 @@ function ParticipantSettingsSheet({
               <div className="persona-preset-list" role="list" aria-label="Persona presets">
                 {filteredPersonaPresets.length > 0 ? (
                   filteredPersonaPresets.map((preset) => {
-                    const isApplied = participant.name === preset.name && participant.persona === preset.persona;
+                    const isApplied =
+                      participant.name === preset.name &&
+                      participant.persona === preset.persona &&
+                      (participant.avatarUrl ?? "") === (preset.avatarUrl ?? "");
 
                     return (
                       <button
@@ -318,17 +350,28 @@ function ParticipantSettingsSheet({
                         type="button"
                         className={`persona-preset-card ${isApplied ? "is-applied" : ""}`}
                         onClick={() => {
-                          onChange({ name: preset.name, persona: preset.persona });
+                          onChange({ name: preset.name, persona: preset.persona, avatarUrl: preset.avatarUrl });
                           setSheetView("form");
                         }}
                         aria-pressed={isApplied}
                       >
-                        <span className="persona-preset-card-header">
-                          <span className="persona-preset-card-name">{preset.name}</span>
-                          <span className="persona-preset-card-language">{preset.language}</span>
+                        <span className="persona-preset-card-top">
+                          <ParticipantAvatar
+                            name={preset.name}
+                            avatarUrl={preset.avatarUrl}
+                            className="persona-preset-avatar"
+                            fallbackClassName="persona-preset-avatar-fallback"
+                            imageClassName="avatar-image"
+                          />
+                          <span className="persona-preset-card-copy">
+                            <span className="persona-preset-card-header">
+                              <span className="persona-preset-card-name">{preset.name}</span>
+                              <span className="persona-preset-card-language">{preset.language}</span>
+                            </span>
+                            <span className="persona-preset-card-title">{preset.title}</span>
+                            <span className="persona-preset-card-summary">{preset.summary}</span>
+                          </span>
                         </span>
-                        <span className="persona-preset-card-title">{preset.title}</span>
-                        <span className="persona-preset-card-summary">{preset.summary}</span>
                         <span className="persona-preset-card-cta">{isApplied ? "Applied" : "Apply preset"}</span>
                       </button>
                     );
@@ -362,6 +405,44 @@ function ParticipantSettingsSheet({
                   onChange={(event) => onChange({ name: event.target.value })}
                   placeholder="Council member name"
                 />
+              </FieldShell>
+
+              <FieldShell
+                label="Avatar"
+                hint="Use a local path like /avatars/... or any direct image URL. The UI falls back to initials if the image fails."
+              >
+                <div className="participant-avatar-field">
+                  <ParticipantAvatar
+                    name={participant.name || "Council member"}
+                    avatarUrl={participant.avatarUrl}
+                    className="participant-avatar-preview"
+                    fallbackClassName="participant-avatar-preview-fallback"
+                    imageClassName="avatar-image"
+                    decorative={false}
+                  />
+
+                  <div className="participant-avatar-field-copy">
+                    <input
+                      className="field mono"
+                      value={participant.avatarUrl ?? ""}
+                      onChange={(event) => {
+                        const nextAvatarUrl = event.target.value;
+                        onChange({ avatarUrl: nextAvatarUrl.trim() ? nextAvatarUrl : undefined });
+                      }}
+                      placeholder="/avatars/presets/luis-montenegro.jpg"
+                    />
+
+                    {participant.avatarUrl ? (
+                      <button
+                        type="button"
+                        className="participant-avatar-clear"
+                        onClick={() => onChange({ avatarUrl: undefined })}
+                      >
+                        Remove avatar
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               </FieldShell>
 
               <FieldShell
@@ -595,18 +676,16 @@ function StudioSettingsModal({
   );
 }
 
-function TranscriptSheet({
+function TranscriptPanel({
   mode,
   turnCount,
   isRunning,
   markdown,
-  onClose,
 }: {
   mode: RunInput["mode"];
   turnCount: number;
   isRunning: boolean;
   markdown: string;
-  onClose: () => void;
 }) {
   const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -620,47 +699,41 @@ function TranscriptSheet({
   }, [markdown]);
 
   return (
-    <div className="fixed inset-0 z-[45] flex justify-end bg-[rgba(6,9,12,0.42)] backdrop-blur-sm">
-      <button type="button" className="flex-1 cursor-default" aria-label="Close transcript" onClick={onClose} />
-      <aside className="settings-sheet transcript-sheet w-full max-w-2xl border-l border-[color:var(--line)]">
-        <div className="transcript-sheet-header">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">
-              {mode === "debate" ? "Debate Transcript" : "Council Transcript"}
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Live markdown feed</h2>
-          </div>
-
-          <div className="transcript-sheet-actions">
-            <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
-              <span className="transcript-status-dot" />
-              {isRunning ? "Live" : `${turnCount} turns`}
-            </span>
-            <button type="button" onClick={onClose} className="action-button">
-              Close
-            </button>
-          </div>
+    <article className="transcript-sheet transcript-sheet-inline">
+      <div className="transcript-sheet-header">
+        <div>
+          <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">
+            {mode === "debate" ? "Debate Transcript" : "Council Transcript"}
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Live markdown feed</h2>
         </div>
 
-        <div ref={transcriptBodyRef} className="transcript-sheet-body">
-          <ReactMarkdown
-            components={{
-              h1: ({ children }) => <h1 className="transcript-markdown-h1">{children}</h1>,
-              h2: ({ children }) => <h2 className="transcript-markdown-h2">{children}</h2>,
-              p: ({ children }) => <p className="transcript-markdown-p">{children}</p>,
-              em: ({ children }) => <em className="transcript-markdown-em">{children}</em>,
-              ul: ({ children }) => <ul className="transcript-markdown-ul">{children}</ul>,
-              ol: ({ children }) => <ol className="transcript-markdown-ol">{children}</ol>,
-              li: ({ children }) => <li className="transcript-markdown-li">{children}</li>,
-              code: ({ children }) => <code className="transcript-markdown-code">{children}</code>,
-              blockquote: ({ children }) => <blockquote className="transcript-markdown-blockquote">{children}</blockquote>,
-            }}
-          >
-            {markdown}
-          </ReactMarkdown>
+        <div className="transcript-sheet-actions">
+          <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
+            <span className="transcript-status-dot" />
+            {isRunning ? "Autoplay" : `${turnCount} turns`}
+          </span>
         </div>
-      </aside>
-    </div>
+      </div>
+
+      <div ref={transcriptBodyRef} className="transcript-sheet-body">
+        <ReactMarkdown
+          components={{
+            h1: ({ children }) => <h1 className="transcript-markdown-h1">{children}</h1>,
+            h2: ({ children }) => <h2 className="transcript-markdown-h2">{children}</h2>,
+            p: ({ children }) => <p className="transcript-markdown-p">{children}</p>,
+            em: ({ children }) => <em className="transcript-markdown-em">{children}</em>,
+            ul: ({ children }) => <ul className="transcript-markdown-ul">{children}</ul>,
+            ol: ({ children }) => <ol className="transcript-markdown-ol">{children}</ol>,
+            li: ({ children }) => <li className="transcript-markdown-li">{children}</li>,
+            code: ({ children }) => <code className="transcript-markdown-code">{children}</code>,
+            blockquote: ({ children }) => <blockquote className="transcript-markdown-blockquote">{children}</blockquote>,
+          }}
+        >
+          {markdown}
+        </ReactMarkdown>
+      </div>
+    </article>
   );
 }
 
@@ -681,9 +754,12 @@ function ChamberStage({
   isPromptReadOnly,
   hasLoadedKey,
   hasApiKey,
-  showTranscript,
+  panelMode,
+  transcriptMode,
+  transcriptTurnCount,
+  transcriptMarkdown,
   onOpenSettings,
-  onOpenTranscript,
+  onPanelModeChange,
   onModeChange,
   onPromptChange,
   onAddMember,
@@ -706,9 +782,12 @@ function ChamberStage({
   isPromptReadOnly: boolean;
   hasLoadedKey: boolean;
   hasApiKey: boolean;
-  showTranscript: boolean;
+  panelMode: StagePanelMode;
+  transcriptMode: RunInput["mode"];
+  transcriptTurnCount: number;
+  transcriptMarkdown: string;
   onOpenSettings: () => void;
-  onOpenTranscript: () => void;
+  onPanelModeChange: (mode: StagePanelMode) => void;
   onModeChange: (mode: RunInput["mode"]) => void;
   onPromptChange: (value: string) => void;
   onAddMember: () => void;
@@ -724,6 +803,7 @@ function ChamberStage({
     state: currentFrame && index === 0 ? "active" : "ready",
   }));
 
+  const hasPlaybackStarted = isRunning || frames.length > 0;
   const currentTimeMs = currentFrame?.timestampMs ?? 0;
   const bubbleHintLabel = currentFrame
     ? isBubbleStreaming
@@ -797,184 +877,207 @@ function ChamberStage({
           >
             {isRunning ? "Running..." : `Run ${mode}`}
           </button>
-
-          <button
-            type="button"
-            onClick={onOpenTranscript}
-            className={`action-button action-button-compact ${showTranscript ? "action-button-primary" : ""}`}
-          >
-            <span className="action-button-icon" aria-hidden="true">
-              <TranscriptGlyph />
-            </span>
-            Transcript
-          </button>
         </div>
       </div>
 
-      <div className="stage-frame">
-        <div className="timeline-shell">
-          <div className="timeline-controls">
-            <div className="timeline-meta">
-              <div className="timeline-clock mono">
-                <span>{formatClock(currentTimeMs)}</span>
-                <span>/</span>
-                <span>{formatClock(totalDurationMs)}</span>
-              </div>
-            </div>
-          </div>
+      {hasPlaybackStarted ? (
+        <div className="stage-frame">
+          <div className="cinema-stage">
+            <div className="cinema-vignette" />
+            <div className="council-floor-glow" />
 
-          <div className="timeline-track-shell">
-            <div className="timeline-marker-row" aria-hidden="true">
-              {chapters.map((chapter) => (
-                <button
-                  key={chapter.id}
-                  type="button"
-                  className="timeline-marker"
-                  style={{
-                    left:
-                      totalDurationMs > 0 ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%` : "0%",
-                  }}
-                  onClick={() => onSelectFrame(chapter.frameIndex)}
-                  disabled={frames.length === 0}
-                  title={chapter.label}
-                />
-              ))}
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(frames.length - 1, 0)}
-              value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
-              onChange={(event) => onSelectFrame(Number(event.target.value))}
-              disabled={frames.length < 2}
-              className="timeline-slider"
-              aria-label="Playback timeline"
-            />
-          </div>
-        </div>
-
-        <div className="cinema-stage">
-          <div className="cinema-vignette" />
-          <div className="council-floor-glow" />
-
-          <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
-            <p className="speaker-queue-kicker">Up next</p>
-            <div className="speaker-queue-list">
-              {queueFrames.length > 0 ? (
-                queueFrames.map(({ frame, participant, state }, index) => (
-                  <button
-                    key={frame.id}
-                    type="button"
-                    className={`speaker-queue-item is-${state}`}
-                    onClick={() => onSelectFrame(queueStartIndex + index)}
-                    aria-label={`${state === "active" ? "Current" : "Upcoming"} turn: ${frame.speakerName}`}
-                  >
+            <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
+              <p className="speaker-queue-kicker">Up next</p>
+              <div className="speaker-queue-list">
+                {queueFrames.length > 0 ? (
+                  queueFrames.map(({ frame, participant, state }, index) => (
+                    <button
+                      key={frame.id}
+                      type="button"
+                      className={`speaker-queue-item is-${state}`}
+                      onClick={() => onSelectFrame(queueStartIndex + index)}
+                      aria-label={`${state === "active" ? "Current" : "Upcoming"} turn: ${frame.speakerName}`}
+                    >
                     <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
-                    <span className="speaker-queue-avatar" aria-hidden="true">
-                      {participantInitials(frame.speakerName)}
-                    </span>
+                    <ParticipantAvatar
+                      name={frame.speakerName}
+                      avatarUrl={participant?.avatarUrl}
+                      className="speaker-queue-avatar"
+                      fallbackClassName="speaker-queue-avatar-fallback"
+                    />
                     <span className="speaker-queue-copy">
                       <span className="speaker-queue-name">{frame.speakerName}</span>
                       <span className="speaker-queue-model mono">
-                        {frame.chapterLabel} · {participant?.model ?? frame.model}
+                          {frame.chapterLabel} · {participant?.model ?? frame.model}
+                        </span>
                       </span>
-                    </span>
-                    <span className={`speaker-queue-state speaker-queue-state-${state}`}>
-                      {state === "active" ? "active" : "ready"}
-                    </span>
-                  </button>
-                ))
-              ) : (
-                <div className="speaker-queue-empty">
-                  {isRunning ? "Waiting for the first turn to enter the queue." : "Run the council to build the queue."}
-                </div>
-              )}
-            </div>
-          </aside>
-
-          <div className="speaker-focus-shell">
-            <div className="speaker-focus-stack">
-              <div className="speaker-focus-figure">
-                {activeSpeaker ? (
-                  <button
-                    type="button"
-                    className="speaker-focus-config"
-                    onClick={() => onOpenParticipant(activeSpeaker.id)}
-                    aria-label={`Configure ${activeSpeaker.name}`}
-                  >
-                    <SettingsGlyph />
-                  </button>
-                ) : null}
-
-                <div className={`speaker-focus-avatar ${currentFrame ? "is-speaking" : "is-idle"}`} aria-hidden="true">
-                  <span className="speaker-focus-avatar-ring" />
-                  <span className="speaker-focus-avatar-core">
-                    {participantInitials(activeSpeaker?.name ?? "Council")}
-                  </span>
-                </div>
-
-                <div className="speaker-focus-meta">
-                  <span className="speaker-focus-name">{activeSpeaker?.name ?? "Council"}</span>
-                  <span className="speaker-focus-model mono">
-                    {activeSpeaker?.model ?? (isRunning ? "waiting" : "ready")}
-                  </span>
-                </div>
-              </div>
-
-              <div className={`speaker-focus-bubble ${!currentFrame ? "is-idle" : ""}`}>
-                {currentFrame ? (
-                  <article key={currentFrame.id} className="speaker-focus-bubble-card">
-                    <p className="stage-bubble-speaker">
-                      {currentFrame.speakerName}
-                      <span>{kindLabel(currentFrame.kind)}</span>
-                    </p>
-                    <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
-                      {displayedBubbleContent || "\u00a0"}
-                    </p>
-                    {bubbleHintLabel ? (
-                      <div className="stage-bubble-footer">
-                        <span className="stage-bubble-hint">
-                          Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
-                        </span>
-                      </div>
-                    ) : null}
-                  </article>
-                ) : isRunning ? (
-                  <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
-                    <p className="stage-bubble-speaker">
-                      Chamber
-                      <span>idle</span>
-                    </p>
-                    <p className="stage-bubble-copy">
-                      The room is live. The first speech bubble will land here as soon as the coordinator responds.
-                    </p>
-                    {bubbleHintLabel ? (
-                      <div className="stage-bubble-footer">
-                        <span className="stage-bubble-hint">
-                          Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
-                        </span>
-                      </div>
-                    ) : null}
-                  </article>
+                      <span className={`speaker-queue-state speaker-queue-state-${state}`}>
+                        {state === "active" ? "active" : "ready"}
+                      </span>
+                    </button>
+                  ))
                 ) : (
-                  <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
-                    <p className="stage-bubble-speaker">
-                      Chamber
-                      <span>ready</span>
-                    </p>
-                    <p className="stage-bubble-copy">Start the run to put the active speaker here.</p>
-                  </article>
+                  <div className="speaker-queue-empty">
+                    {isRunning ? "Waiting for the first turn to enter the queue." : "Run the council to build the queue."}
+                  </div>
                 )}
+              </div>
+            </aside>
+
+            <div className={`speaker-focus-shell ${panelMode === "transcript" ? "speaker-focus-shell-transcript" : ""}`}>
+              <div className="speaker-focus-content">
+                {panelMode === "transcript" ? (
+                  <TranscriptPanel
+                    mode={transcriptMode}
+                    turnCount={transcriptTurnCount}
+                    isRunning={isRunning}
+                    markdown={transcriptMarkdown}
+                  />
+                ) : (
+                  <div className="speaker-focus-stack">
+                    <div className="speaker-focus-figure">
+                      {activeSpeaker ? (
+                        <button
+                          type="button"
+                          className="speaker-focus-config"
+                          onClick={() => onOpenParticipant(activeSpeaker.id)}
+                          aria-label={`Configure ${activeSpeaker.name}`}
+                        >
+                          <SettingsGlyph />
+                        </button>
+                      ) : null}
+
+                      <div className={`speaker-focus-avatar ${currentFrame ? "is-speaking" : "is-idle"}`} aria-hidden="true">
+                        <span className="speaker-focus-avatar-ring" />
+                        <ParticipantAvatar
+                          name={activeSpeaker?.name ?? "Council"}
+                          avatarUrl={activeSpeaker?.avatarUrl}
+                          className="speaker-focus-avatar-core"
+                          fallbackClassName="speaker-focus-avatar-fallback"
+                        />
+                      </div>
+
+                      <div className="speaker-focus-meta">
+                        <span className="speaker-focus-name">{activeSpeaker?.name ?? "Council"}</span>
+                        <span className="speaker-focus-model mono">
+                          {activeSpeaker?.model ?? (isRunning ? "waiting" : "ready")}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className={`speaker-focus-bubble ${!currentFrame ? "is-idle" : ""}`}>
+                      {currentFrame ? (
+                        <article key={currentFrame.id} className="speaker-focus-bubble-card">
+                          <p className="stage-bubble-speaker">
+                            {currentFrame.speakerName}
+                            <span>{kindLabel(currentFrame.kind)}</span>
+                          </p>
+                          <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
+                            {displayedBubbleContent || "\u00a0"}
+                          </p>
+                          {bubbleHintLabel ? (
+                            <div className="stage-bubble-footer">
+                              <span className="stage-bubble-hint">
+                                Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
+                              </span>
+                            </div>
+                          ) : null}
+                        </article>
+                      ) : isRunning ? (
+                        <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
+                          <p className="stage-bubble-speaker">
+                            Chamber
+                            <span>idle</span>
+                          </p>
+                          <p className="stage-bubble-copy">
+                            The room is live. The first speech bubble will land here as soon as the coordinator responds.
+                          </p>
+                          {bubbleHintLabel ? (
+                            <div className="stage-bubble-footer">
+                              <span className="stage-bubble-hint">
+                                Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
+                              </span>
+                            </div>
+                          ) : null}
+                        </article>
+                      ) : (
+                        <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
+                          <p className="stage-bubble-speaker">
+                            Chamber
+                            <span>ready</span>
+                          </p>
+                          <p className="stage-bubble-copy">Start the run to put the active speaker here.</p>
+                        </article>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="timeline-shell speaker-playbar-shell">
+                  <div className="timeline-controls">
+                    <div className="timeline-meta">
+                      <div className="timeline-clock mono">
+                        <span>{formatClock(currentTimeMs)}</span>
+                        <span>/</span>
+                        <span>{formatClock(totalDurationMs)}</span>
+                      </div>
+                    </div>
+
+                    <div className="mode-toggle mode-toggle-compact" aria-label="Stage panel mode">
+                      {(["conversation", "transcript"] as const).map((nextPanelMode) => (
+                        <button
+                          key={nextPanelMode}
+                          type="button"
+                          onClick={() => onPanelModeChange(nextPanelMode)}
+                          className={`mode-toggle-button mode-toggle-button-compact ${panelMode === nextPanelMode ? "is-selected" : ""}`}
+                        >
+                          {nextPanelMode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="timeline-track-shell">
+                    <div className="timeline-marker-row" aria-hidden="true">
+                      {chapters.map((chapter) => (
+                        <button
+                          key={chapter.id}
+                          type="button"
+                          className="timeline-marker"
+                          style={{
+                            left:
+                              totalDurationMs > 0
+                                ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%`
+                                : "0%",
+                          }}
+                          onClick={() => onSelectFrame(chapter.frameIndex)}
+                          disabled={frames.length === 0}
+                          title={chapter.label}
+                        />
+                      ))}
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(frames.length - 1, 0)}
+                      value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
+                      onChange={(event) => onSelectFrame(Number(event.target.value))}
+                      disabled={frames.length < 2}
+                      className="timeline-slider"
+                      aria-label="Playback timeline"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
+      ) : null}
 
-        {error ? <div className="notice-row notice-row-error">{error}</div> : null}
-        {warnings.length ? (
-          <div className="notice-row notice-row-warning">{warnings[warnings.length - 1]}</div>
-        ) : null}
-      </div>
+      {error ? <div className="notice-row notice-row-error">{error}</div> : null}
+      {warnings.length ? (
+        <div className="notice-row notice-row-warning">{warnings[warnings.length - 1]}</div>
+      ) : null}
     </section>
   );
 }
@@ -989,7 +1092,7 @@ export function CouncilStudio() {
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [showTranscriptSheet, setShowTranscriptSheet] = useState(false);
+  const [panelMode, setPanelMode] = useState<StagePanelMode>("conversation");
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [activeFrameIndex, setActiveFrameIndex] = useState(0);
   const [completedBubbleIds, setCompletedBubbleIds] = useState<Record<string, true>>({});
@@ -1113,17 +1216,17 @@ export function CouncilStudio() {
   }, [autoAdvanceFrameIndex, frames.length]);
 
   useEffect(() => {
-    if (showTranscriptSheet) {
+    if (panelMode === "transcript") {
       return;
     }
 
     if (autoAdvanceFrameIndex !== null) {
       setAutoAdvanceFrameIndex(null);
     }
-  }, [autoAdvanceFrameIndex, showTranscriptSheet]);
+  }, [autoAdvanceFrameIndex, panelMode]);
 
   useEffect(() => {
-    if (!showTranscriptSheet) {
+    if (panelMode !== "transcript") {
       return;
     }
 
@@ -1160,9 +1263,9 @@ export function CouncilStudio() {
     currentFrame,
     frames.length,
     isRunning,
+    panelMode,
     revealedBubbleId,
     revealedBubbleChars,
-    showTranscriptSheet,
   ]);
 
   function updateCoordinator(patch: Partial<ParticipantConfig>) {
@@ -1272,6 +1375,19 @@ export function CouncilStudio() {
         return;
       }
 
+      if (panelMode !== "conversation") {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          if (activeFrameIndex === 0) {
+            return;
+          }
+
+          setQueuedFrameIndex(null);
+          setActiveFrameIndex((current) => Math.max(current - 1, 0));
+        }
+        return;
+      }
+
       if (event.key === " " || event.code === "Space" || event.key === "ArrowRight") {
         event.preventDefault();
 
@@ -1315,7 +1431,7 @@ export function CouncilStudio() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeFrameIndex, currentFrame, frames.length, isRunning, revealedBubbleChars]);
+  }, [activeFrameIndex, currentFrame, frames.length, isRunning, panelMode, revealedBubbleChars]);
 
   function applyProgressEvent(event: RunProgressEvent) {
     if (event.type === "status") {
@@ -1401,9 +1517,12 @@ export function CouncilStudio() {
           isPromptReadOnly={isRunning}
           hasLoadedKey={hasLoadedKey}
           hasApiKey={hasApiKey}
-          showTranscript={showTranscriptSheet}
+          panelMode={panelMode}
+          transcriptMode={transcriptMode}
+          transcriptTurnCount={transcriptTurns.length}
+          transcriptMarkdown={transcriptMarkdown}
           onOpenSettings={() => setShowSettingsModal(true)}
-          onOpenTranscript={() => setShowTranscriptSheet(true)}
+          onPanelModeChange={setPanelMode}
           onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
           onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
           onAddMember={addMember}
@@ -1411,16 +1530,6 @@ export function CouncilStudio() {
           onSelectFrame={selectFrame}
         />
       </form>
-
-      {showTranscriptSheet ? (
-        <TranscriptSheet
-          mode={transcriptMode}
-          turnCount={transcriptTurns.length}
-          isRunning={isRunning}
-          markdown={transcriptMarkdown}
-          onClose={() => setShowTranscriptSheet(false)}
-        />
-      ) : null}
 
       {hasLoadedKey && showSettingsModal ? (
         <StudioSettingsModal

@@ -4,6 +4,7 @@ export interface ParticipantPersonaPreset {
   title: string;
   summary: string;
   language: string;
+  avatarUrl?: string;
   searchText: string;
   persona: string;
 }
@@ -42,6 +43,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "PSD leader; centre-right institutionalist; prime-ministerial cadence",
     summary: "Moderate reformist, pro-European, fiscally cautious, focused on governability and execution.",
     language: "European Portuguese first; competent English when needed",
+    avatarUrl: "/avatars/presets/luis-montenegro.jpg",
     searchTerms: [
       "luis montenegro",
       "luís montenegro",
@@ -64,6 +66,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "Bloco de Esquerda coordinator; democratic socialist; anti-austerity polemicist",
     summary: "Sharp, data-literate left voice focused on inequality, housing, labour, feminism, and finance.",
     language: "European Portuguese first; fluent English for international topics",
+    avatarUrl: "/avatars/presets/mariana-mortagua.jpg",
     searchTerms: [
       "mariana mortagua",
       "mariana mortágua",
@@ -85,6 +88,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "Chega leader; nationalist right populist; confrontational anti-establishment voice",
     summary: "Combative, polarising, media-savvy rhetoric centred on security, corruption, identity, and order.",
     language: "European Portuguese first; direct English if pressed",
+    avatarUrl: "/avatars/presets/andre-ventura.jpg",
     searchTerms: [
       "andre ventura",
       "andré ventura",
@@ -105,6 +109,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "Senior PSD figure; commentator; moderate centre-right institutional pragmatist",
     summary: "Measured, insider-savvy, consensus-seeking conservative with television pundit precision.",
     language: "European Portuguese",
+    avatarUrl: "/avatars/presets/luis-marques-mendes.png",
     searchTerms: [
       "luis marques mendes",
       "luís marques mendes",
@@ -125,6 +130,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "Admiral; public-service disciplinarian; non-partisan authority figure",
     summary: "Austere, duty-driven, competence-first voice focused on order, service, and national cohesion.",
     language: "European Portuguese; concise English when operational clarity matters",
+    avatarUrl: "/avatars/presets/henrique-gouveia-e-melo.jpg",
     searchTerms: [
       "henrique gouveia e melo",
       "gouveia e melo",
@@ -145,6 +151,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "Iniciativa Liberal founder; classical liberal reformer; pro-market moderniser",
     summary: "Economically liberal, reformist, managerial voice focused on freedom, competition, and state efficiency.",
     language: "European Portuguese first; polished English for business or EU topics",
+    avatarUrl: "/avatars/presets/joao-cotrim-de-figueiredo.jpg",
     searchTerms: [
       "joao cotrim de figueiredo",
       "joão cotrim de figueiredo",
@@ -166,6 +173,7 @@ export const PARTICIPANT_PERSONA_PRESETS: ParticipantPersonaPreset[] = [
     title: "Former PS leader; moderate social democrat; conciliatory institutional centre-left",
     summary: "Serene, consensus-oriented social-democratic voice centred on cohesion, dignity, and democratic trust.",
     language: "European Portuguese; formal English when diplomacy requires it",
+    avatarUrl: "/avatars/presets/antonio-jose-seguro.png",
     searchTerms: [
       "antonio jose seguro",
       "antónio josé seguro",

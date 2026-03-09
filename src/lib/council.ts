@@ -17,6 +17,7 @@ export interface ParticipantConfig {
   name: string;
   model: string;
   persona: string;
+  avatarUrl?: string;
 }
 
 export interface RunInput {
@@ -128,6 +129,11 @@ function normalizeText(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
+function normalizeOptionalText(value: unknown): string | undefined {
+  const normalized = normalizeText(value);
+  return normalized || undefined;
+}
+
 function normalizeParticipant(value: unknown, fallbackName: string): ParticipantConfig {
   const raw = (value ?? {}) as Record<string, unknown>;
 
@@ -136,6 +142,7 @@ function normalizeParticipant(value: unknown, fallbackName: string): Participant
     name: normalizeText(raw.name, fallbackName),
     model: normalizeText(raw.model),
     persona: normalizeText(raw.persona),
+    avatarUrl: normalizeOptionalText(raw.avatarUrl),
   };
 }
 
