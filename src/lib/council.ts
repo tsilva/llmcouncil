@@ -76,6 +76,8 @@ export const MODEL_SUGGESTIONS = [
   "qwen/qwen3.5-35b-a3b",
 ] as const;
 
+export const DEFAULT_PRESET_MODEL = "x-ai/grok-4.1-fast";
+
 export const BALLOON_DELIMITER = "<<<BALLOON>>>";
 
 export const DEFAULT_SHARED_DIRECTIVE = `You are participating in an LLM council. Stay faithful to the assigned persona, reason explicitly, and be willing to update your view when another member makes a stronger point. Keep answers concrete, balanced, focused on the user's prompt, and phrased like natural spoken conversation instead of an essay.`;
@@ -133,7 +135,7 @@ export function createDefaultInput(): RunInput {
       return {
         id: makeId(`member-${index + 1}`),
         name: preset.name,
-        model: MODEL_SUGGESTIONS[index % MODEL_SUGGESTIONS.length] ?? "openai/gpt-5.4",
+        model: DEFAULT_PRESET_MODEL,
         persona: preset.persona,
         avatarUrl: preset.avatarUrl,
       };

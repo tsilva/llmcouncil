@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
+  DEFAULT_PRESET_MODEL,
   MODEL_SUGGESTIONS,
   addUsage,
   createRosterSnapshot,
@@ -15,7 +16,7 @@ import {
   type RunResult,
 } from "@/lib/council";
 import { runCouncilWorkflow, type RunProgressEvent } from "@/lib/council-engine";
-import { filterParticipantPersonaPresets } from "@/lib/persona-presets";
+import { filterParticipantPersonaPresets, type ParticipantPersonaPreset } from "@/lib/persona-presets";
 
 const OPENROUTER_KEY_STORAGE = "llmcouncil.openrouter.key";
 
@@ -44,11 +45,25 @@ type TimelineChapter = {
   timestampMs: number;
 };
 
-type QueueFrameGroup = {
-  frame: PlaybackFrame;
+type PlannedQueueTurn = {
+  id: string;
+  kind: CouncilTurn["kind"];
+  round?: number;
+  speakerId: string;
+  speakerName: string;
+  model: string;
+  chapterLabel: string;
+};
+
+type QueueEntry = {
+  id: string;
+  kind: CouncilTurn["kind"];
+  speakerName: string;
+  model: string;
+  chapterLabel: string;
   participant: ParticipantConfig | null;
-  state: "active" | "ready";
-  frameIndex: number;
+  state: "active" | "ready" | "thinking";
+  frameIndex: number | null;
 };
 
 type StagePanelMode = "conversation" | "transcript";
@@ -64,14 +79,6 @@ function maskApiKey(value: string): string {
 
 function kindLabel(kind: CouncilTurn["kind"]): string {
   return kind.replace(/_/g, " ");
-}
-
-function bubbleKindLabel(kind: CouncilTurn["kind"]): string | null {
-  if (kind === "member_turn") {
-    return null;
-  }
-
-  return kindLabel(kind);
 }
 
 function chapterLabelForTurn(turn: CouncilTurn): string {
@@ -102,11 +109,9 @@ function bubbleRevealIncrement(content: string): number {
   return Math.max(2, Math.ceil(content.length / 42));
 }
 
-function formatClock(valueMs: number): string {
-  const totalSeconds = Math.max(0, Math.round(valueMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+function bubbleHoldDuration(content: string): number {
+  const wordCount = content.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(9000, Math.max(3200, wordCount * 280));
 }
 
 function flattenTurns(result: RunResult | null): CouncilTurn[] {
@@ -175,36 +180,141 @@ function buildPlaybackTimeline(result: RunResult | null): {
   };
 }
 
-function buildQueueFrameGroups({
+function buildPlannedQueueTurns({
+  mode,
+  rounds,
+  coordinator,
+  members,
+}: {
+  mode: RunInput["mode"];
+  rounds: number;
+  coordinator: ParticipantConfig;
+  members: ParticipantConfig[];
+}): PlannedQueueTurn[] {
+  if (mode === "council") {
+    return [
+      ...members.map((member, index) => ({
+        id: `planned-council-response-${index + 1}`,
+        kind: "council_response" as const,
+        speakerId: member.id,
+        speakerName: member.name,
+        model: member.model,
+        chapterLabel: "Response",
+      })),
+      {
+        id: "planned-consensus",
+        kind: "consensus" as const,
+        speakerId: coordinator.id,
+        speakerName: coordinator.name,
+        model: coordinator.model,
+        chapterLabel: "Consensus",
+      },
+    ];
+  }
+
+  const plannedTurns: PlannedQueueTurn[] = [
+    {
+      id: "planned-opening",
+      kind: "opening",
+      speakerId: coordinator.id,
+      speakerName: coordinator.name,
+      model: coordinator.model,
+      chapterLabel: "Opening",
+    },
+  ];
+
+  for (let round = 1; round <= rounds; round += 1) {
+    members.forEach((member, memberIndex) => {
+      plannedTurns.push({
+        id: `planned-round-${round}-${memberIndex + 1}`,
+        kind: "member_turn",
+        round,
+        speakerId: member.id,
+        speakerName: member.name,
+        model: member.model,
+        chapterLabel: `Round ${round}`,
+      });
+    });
+  }
+
+  plannedTurns.push({
+    id: "planned-synthesis",
+    kind: "synthesis",
+    speakerId: coordinator.id,
+    speakerName: coordinator.name,
+    model: coordinator.model,
+    chapterLabel: "Synthesis",
+  });
+
+  return plannedTurns;
+}
+
+function buildQueueEntries({
   frames,
   roster,
-  startIndex,
-  hasCurrentFrame,
+  plannedTurns,
+  currentFrame,
+  isRunning,
 }: {
   frames: PlaybackFrame[];
   roster: ParticipantConfig[];
-  startIndex: number;
-  hasCurrentFrame: boolean;
-}): QueueFrameGroup[] {
-  const rosterById = new Map(roster.map((participant) => [participant.id, participant]));
-  const groups: QueueFrameGroup[] = [];
-
-  frames.slice(startIndex).forEach((frame, index) => {
-    const previousGroup = groups[groups.length - 1];
-
-    if (previousGroup?.frame.speakerId === frame.speakerId) {
-      return;
+  plannedTurns: PlannedQueueTurn[];
+  currentFrame?: PlaybackFrame;
+  isRunning: boolean;
+}): QueueEntry[] {
+  const participantById = new Map(roster.map((participant) => [participant.id, participant]));
+  const actualTurnStarts = frames.reduce<Array<{ frame: PlaybackFrame; frameIndex: number }>>((entries, frame, frameIndex) => {
+    if (entries[entries.length - 1]?.frame.turnId === frame.turnId) {
+      return entries;
     }
 
-    groups.push({
-      frame,
-      participant: rosterById.get(frame.speakerId) ?? null,
-      state: hasCurrentFrame && index === 0 ? "active" : "ready",
-      frameIndex: startIndex + index,
-    });
-  });
+    entries.push({ frame, frameIndex });
+    return entries;
+  }, []);
 
-  return groups;
+  if (!currentFrame) {
+    if (!isRunning) {
+      return [];
+    }
+
+    return plannedTurns.slice(actualTurnStarts.length).map((plannedTurn, index) => ({
+      id: plannedTurn.id,
+      kind: plannedTurn.kind,
+      speakerName: plannedTurn.speakerName,
+      model: plannedTurn.model,
+      chapterLabel: plannedTurn.chapterLabel,
+      participant: participantById.get(plannedTurn.speakerId) ?? null,
+      state: index === 0 ? "thinking" : "ready",
+      frameIndex: null,
+    }));
+  }
+
+  const currentTurnIndex = actualTurnStarts.findIndex(({ frame }) => frame.turnId === currentFrame.turnId);
+  const visibleActualTurns = (currentTurnIndex >= 0 ? actualTurnStarts.slice(currentTurnIndex) : actualTurnStarts).map(
+    ({ frame, frameIndex }, index) => ({
+      id: frame.id,
+      kind: frame.kind,
+      speakerName: frame.speakerName,
+      model: frame.model,
+      chapterLabel: frame.chapterLabel,
+      participant: participantById.get(frame.speakerId) ?? null,
+      state: index === 0 ? ("active" as const) : ("ready" as const),
+      frameIndex,
+    }),
+  );
+
+  const remainingPlannedTurns = plannedTurns.slice(actualTurnStarts.length).map((plannedTurn, index) => ({
+    id: plannedTurn.id,
+    kind: plannedTurn.kind,
+    speakerName: plannedTurn.speakerName,
+    model: plannedTurn.model,
+    chapterLabel: plannedTurn.chapterLabel,
+    participant: participantById.get(plannedTurn.speakerId) ?? null,
+    state: isRunning && index === 0 ? ("thinking" as const) : ("ready" as const),
+    frameIndex: null,
+  }));
+
+  return [...visibleActualTurns, ...remainingPlannedTurns];
 }
 
 function participantInitials(name: string): string {
@@ -306,14 +416,6 @@ function CloseGlyph() {
   );
 }
 
-function BackGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 6l-6 6 6 6" />
-    </svg>
-  );
-}
-
 function PlusGlyph() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -326,6 +428,30 @@ function PlayGlyph() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M8.5 6.2a1 1 0 0 1 1.5-.86l8.17 5.3a1.6 1.6 0 0 1 0 2.72L10 18.66a1 1 0 0 1-1.5-.86V6.2Z" />
+    </svg>
+  );
+}
+
+function PauseGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7.5 5.8A1.3 1.3 0 0 1 8.8 4.5h1.4a1.3 1.3 0 0 1 1.3 1.3v12.4a1.3 1.3 0 0 1-1.3 1.3H8.8a1.3 1.3 0 0 1-1.3-1.3V5.8Zm5 0a1.3 1.3 0 0 1 1.3-1.3h1.4a1.3 1.3 0 0 1 1.3 1.3v12.4a1.3 1.3 0 0 1-1.3 1.3h-1.4a1.3 1.3 0 0 1-1.3-1.3V5.8Z" />
+    </svg>
+  );
+}
+
+function PreviousGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M6.8 5.3a1 1 0 0 1 1 1v11.4a1 1 0 1 1-2 0V6.3a1 1 0 0 1 1-1Zm10.34.04a1 1 0 0 1 .03 1.42L11.9 12l5.27 5.24a1 1 0 1 1-1.41 1.42l-5.98-5.95a1 1 0 0 1 0-1.42l5.95-5.95a1 1 0 0 1 1.41 0Z" />
+    </svg>
+  );
+}
+
+function NextGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M17.2 5.3a1 1 0 0 1 1 1v11.4a1 1 0 1 1-2 0V6.3a1 1 0 0 1 1-1Zm-10.37.04a1 1 0 0 1 1.41 0l5.98 5.95a1 1 0 0 1 0 1.42l-5.98 5.95a1 1 0 1 1-1.41-1.42L12.1 12 6.83 6.76a1 1 0 0 1 0-1.42Z" />
     </svg>
   );
 }
@@ -426,10 +552,13 @@ function SetupParticipantCard({
 function StudioHero({
   config,
   apiKey,
+  draftApiKey,
   canSubmit,
   hasApiKey,
   hasLoadedKey,
   isRunning,
+  onDraftApiKeyChange,
+  onSaveApiKey,
   onOpenSettings,
   onModeChange,
   onPromptChange,
@@ -438,10 +567,13 @@ function StudioHero({
 }: {
   config: RunInput;
   apiKey: string;
+  draftApiKey: string;
   canSubmit: boolean;
   hasApiKey: boolean;
   hasLoadedKey: boolean;
   isRunning: boolean;
+  onDraftApiKeyChange: (value: string) => void;
+  onSaveApiKey: () => boolean;
   onOpenSettings: () => void;
   onModeChange: (mode: RunInput["mode"]) => void;
   onPromptChange: (value: string) => void;
@@ -450,6 +582,31 @@ function StudioHero({
 }) {
   const roster = [config.coordinator, ...config.members];
   const apiKeyLabel = hasLoadedKey ? (hasApiKey ? maskApiKey(apiKey) : "OpenRouter key required") : "Loading";
+  const [isEditingApiKey, setIsEditingApiKey] = useState(false);
+  const apiKeyInputRef = useRef<HTMLInputElement | null>(null);
+  const isApiKeyEditorVisible = isEditingApiKey || (hasLoadedKey && !hasApiKey);
+
+  useEffect(() => {
+    if (!isApiKeyEditorVisible) {
+      return;
+    }
+
+    apiKeyInputRef.current?.focus();
+    apiKeyInputRef.current?.select();
+  }, [isApiKeyEditorVisible]);
+
+  function handleApiKeySubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (onSaveApiKey()) {
+      setIsEditingApiKey(false);
+    }
+  }
+
+  function handleCancelApiKeyEdit() {
+    onDraftApiKeyChange(apiKey);
+    setIsEditingApiKey(false);
+  }
 
   return (
     <section className="hero-shell">
@@ -461,19 +618,50 @@ function StudioHero({
           </p>
 
           <div className="hero-api-block">
-            <span className="status-chip hero-api-chip hero-copy-api">
-              <span>{hasApiKey ? "API key" : "OpenRouter key"}</span>
-              <strong className="mono">{apiKeyLabel}</strong>
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                className="hero-api-edit-button"
-                aria-label="Edit API key"
-                title="Edit API key"
-              >
-                <PencilGlyph />
-              </button>
-            </span>
+            {isApiKeyEditorVisible ? (
+              <form className="hero-api-editor" onSubmit={handleApiKeySubmit}>
+                <label className="hero-api-editor-field" htmlFor="hero-api-key-input">
+                  <span className="hero-api-editor-label">
+                    {hasApiKey ? "OpenRouter API key" : "Enter your OpenRouter API key"}
+                  </span>
+                  <input
+                    id="hero-api-key-input"
+                    ref={apiKeyInputRef}
+                    className="field mono hero-api-input"
+                    type="password"
+                    value={draftApiKey}
+                    onChange={(event) => onDraftApiKeyChange(event.target.value)}
+                    placeholder="sk-or-v1-..."
+                    autoComplete="off"
+                  />
+                </label>
+
+                <div className="hero-api-editor-actions">
+                  <button type="submit" className="action-button action-button-primary hero-api-save-button">
+                    Save key
+                  </button>
+                  {hasApiKey ? (
+                    <button type="button" onClick={handleCancelApiKeyEdit} className="action-button">
+                      Cancel
+                    </button>
+                  ) : null}
+                </div>
+              </form>
+            ) : (
+              <span className="status-chip hero-api-chip hero-copy-api">
+                <span>{hasApiKey ? "API key" : "OpenRouter key"}</span>
+                <strong className="mono">{apiKeyLabel}</strong>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingApiKey(true)}
+                  className="hero-api-edit-button"
+                  aria-label="Edit API key"
+                  title="Edit API key"
+                >
+                  <PencilGlyph />
+                </button>
+              </span>
+            )}
 
             {!hasApiKey && hasLoadedKey ? (
               <a
@@ -585,42 +773,125 @@ function StudioHero({
   );
 }
 
+function PersonaSelectorModal({
+  onClose,
+  onSelectPreset,
+}: {
+  onClose: () => void;
+  onSelectPreset: (preset: ParticipantPersonaPreset) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const presets = filterParticipantPersonaPresets(deferredQuery);
+
+  return (
+    <div className="settings-modal-backdrop">
+      <button type="button" className="settings-modal-dismiss" aria-label="Close persona selector" onClick={onClose} />
+
+      <section className="settings-sheet persona-selector-modal-panel w-full max-w-3xl p-6 sm:p-7">
+        <div className="settings-modal-header">
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Council Selector</p>
+            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Choose a persona</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-[color:var(--ink-soft)]">
+              Select a preset to add a new council member. You can fine-tune the member after adding it.
+            </p>
+          </div>
+
+          <button type="button" onClick={onClose} className="action-button">
+            Close
+          </button>
+        </div>
+
+        <div className="persona-selector-modal-stack">
+          <input
+            className="field"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search Portuguese politicians"
+          />
+
+          <div className="persona-preset-list persona-selector-modal-list" role="list" aria-label="Persona presets">
+            {presets.length > 0 ? (
+              presets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="persona-preset-card"
+                  onClick={() => onSelectPreset(preset)}
+                >
+                  <span className="persona-preset-card-top">
+                    <ParticipantAvatar
+                      name={preset.name}
+                      avatarUrl={preset.avatarUrl}
+                      className="persona-preset-avatar"
+                      fallbackClassName="persona-preset-avatar-fallback"
+                      imageClassName="avatar-image"
+                    />
+                    <span className="persona-preset-card-copy">
+                      <span className="persona-preset-card-header">
+                        <span className="persona-preset-card-name">{preset.name}</span>
+                        <span className="persona-preset-card-language">{preset.language}</span>
+                      </span>
+                      <span className="persona-preset-card-title">{preset.title}</span>
+                      <span className="persona-preset-card-summary">{preset.summary}</span>
+                    </span>
+                  </span>
+                  <span className="persona-preset-card-cta">Add to council</span>
+                </button>
+              ))
+            ) : (
+              <div className="persona-preset-empty">
+                No presets match that search yet. Try a name, party, or ideology keyword.
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ParticipantSettingsSheet({
   roleLabel,
   participant,
-  showPersonaPresets,
   onChange,
   onClose,
   onRemove,
 }: {
   roleLabel: string;
   participant: ParticipantConfig;
-  showPersonaPresets: boolean;
   onChange: (patch: Partial<ParticipantConfig>) => void;
   onClose: () => void;
   onRemove?: () => void;
 }) {
-  const [sheetView, setSheetView] = useState<"form" | "presets">("form");
-  const [personaPresetQuery, setPersonaPresetQuery] = useState("");
   const [isAvatarEditorOpen, setIsAvatarEditorOpen] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [draftName, setDraftName] = useState(participant.name);
   const [draftAvatarUrl, setDraftAvatarUrl] = useState(participant.avatarUrl ?? "");
   const [isAvatarDropActive, setIsAvatarDropActive] = useState(false);
   const personaTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const avatarEditorRef = useRef<HTMLDivElement | null>(null);
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
-  const deferredPersonaPresetQuery = useDeferredValue(personaPresetQuery);
-  const filteredPersonaPresets = filterParticipantPersonaPresets(deferredPersonaPresetQuery);
 
   useEffect(() => {
     const textarea = personaTextareaRef.current;
 
-    if (!textarea || sheetView !== "form") {
+    if (!textarea) {
       return;
     }
 
     textarea.style.height = "0px";
     textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [participant.persona, sheetView]);
+  }, [participant.persona]);
+
+  useEffect(() => {
+    if (isEditingName) {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    }
+  }, [isEditingName, participant.name]);
 
   useEffect(() => {
     if (!isAvatarEditorOpen) {
@@ -666,33 +937,172 @@ function ParticipantSettingsSheet({
     setIsAvatarDropActive(false);
   }
 
+  function commitNameEdit() {
+    const nextName = draftName.trim();
+    onChange({ name: nextName || participant.name });
+    setDraftName(nextName || participant.name);
+    setIsEditingName(false);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-[rgba(6,9,12,0.54)] backdrop-blur-sm">
       <button type="button" className="flex-1 cursor-default" aria-label="Close member settings" onClick={onClose} />
       <aside className="settings-sheet w-full max-w-lg border-l border-[color:var(--line)] p-5 sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            {sheetView === "presets" ? (
+          <div className="participant-sheet-header">
+            <div className="participant-avatar-anchor" ref={avatarEditorRef}>
               <button
                 type="button"
-                onClick={() => setSheetView("form")}
-                aria-label="Back to member form"
-                className="icon-circle-button"
+                className="participant-avatar-button"
+                onClick={() => {
+                  setDraftAvatarUrl(participant.avatarUrl ?? "");
+                  setIsAvatarEditorOpen((current) => !current);
+                }}
+                aria-label="Edit participant avatar"
+                title="Edit participant avatar"
               >
-                <BackGlyph />
+                <ParticipantAvatar
+                  name={participant.name || "Council member"}
+                  avatarUrl={participant.avatarUrl}
+                  className="participant-avatar-preview"
+                  fallbackClassName="participant-avatar-preview-fallback"
+                  imageClassName="avatar-image"
+                  decorative={false}
+                />
               </button>
-            ) : null}
 
-            <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{roleLabel}</p>
-              <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">
-                {sheetView === "presets" ? "Choose a preset" : participant.name}
-              </h2>
-              {sheetView === "presets" ? (
-                <p className="mt-2 max-w-sm text-sm leading-6 text-[color:var(--ink-soft)]">
-                  Pick a predefined persona to populate the member form.
-                </p>
+              {isAvatarEditorOpen ? (
+                <div
+                  className={`participant-avatar-popover ${isAvatarDropActive ? "is-drag-active" : ""}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setIsAvatarDropActive(true);
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setIsAvatarDropActive(false);
+                    }
+                  }}
+                  onDrop={async (event) => {
+                    event.preventDefault();
+                    setIsAvatarDropActive(false);
+                    const droppedFile = Array.from(event.dataTransfer.files).find((file) => file.type.startsWith("image/"));
+
+                    if (droppedFile) {
+                      await applyAvatarFile(droppedFile);
+                    }
+                  }}
+                >
+                  <div className="participant-avatar-popover-copy">
+                    <strong>Avatar</strong>
+                    <span>Paste a link, import an image, or drag one here.</span>
+                  </div>
+
+                  <input
+                    className="field mono"
+                    value={draftAvatarUrl}
+                    onChange={(event) => setDraftAvatarUrl(event.target.value)}
+                    placeholder="https://... or /avatars/..."
+                  />
+
+                  <input
+                    ref={avatarFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        await applyAvatarFile(file);
+                      }
+                      event.target.value = "";
+                    }}
+                  />
+
+                  <div className="participant-avatar-popover-actions">
+                    <button
+                      type="button"
+                      className="action-button"
+                      onClick={() => avatarFileInputRef.current?.click()}
+                    >
+                      Import image
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-button action-button-primary"
+                      onClick={() => {
+                        const nextAvatarUrl = draftAvatarUrl.trim();
+                        onChange({ avatarUrl: nextAvatarUrl || undefined });
+                        setIsAvatarEditorOpen(false);
+                        setIsAvatarDropActive(false);
+                      }}
+                    >
+                      Apply link
+                    </button>
+
+                    {participant.avatarUrl ? (
+                      <button
+                        type="button"
+                        className="participant-avatar-clear"
+                        onClick={() => {
+                          setDraftAvatarUrl("");
+                          onChange({ avatarUrl: undefined });
+                          setIsAvatarEditorOpen(false);
+                          setIsAvatarDropActive(false);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
+            </div>
+
+            <div className="participant-sheet-header-copy">
+              <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{roleLabel}</p>
+              <div className="participant-sheet-name-row">
+                {isEditingName ? (
+                  <input
+                    ref={nameInputRef}
+                    className="field participant-name-input"
+                    value={draftName}
+                    onChange={(event) => setDraftName(event.target.value)}
+                    onBlur={commitNameEdit}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitNameEdit();
+                        return;
+                      }
+
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setDraftName(participant.name);
+                        setIsEditingName(false);
+                      }
+                    }}
+                    placeholder="Council member name"
+                  />
+                ) : (
+                  <>
+                    <h2 className="participant-sheet-name">{participant.name}</h2>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftName(participant.name);
+                        setIsEditingName(true);
+                      }}
+                      className="participant-name-edit-button"
+                      aria-label="Edit participant name"
+                      title="Edit participant name"
+                    >
+                      <PencilGlyph />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
           <button
@@ -706,233 +1116,39 @@ function ParticipantSettingsSheet({
         </div>
 
         <div className="mt-6 grid gap-5">
-          {sheetView === "presets" ? (
-            <>
-              <input
-                className="field"
-                value={personaPresetQuery}
-                onChange={(event) => setPersonaPresetQuery(event.target.value)}
-                placeholder="Search Portuguese politicians"
-              />
+          <FieldShell
+            label="Model"
+            hint="Choose one of the configured OpenRouter models."
+          >
+            <select
+              className="field mono"
+              value={participant.model}
+              onChange={(event) => onChange({ model: event.target.value })}
+            >
+              {MODEL_SUGGESTIONS.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </FieldShell>
 
-              <div className="persona-preset-list" role="list" aria-label="Persona presets">
-                {filteredPersonaPresets.length > 0 ? (
-                  filteredPersonaPresets.map((preset) => {
-                    const isApplied =
-                      participant.name === preset.name &&
-                      participant.persona === preset.persona &&
-                      (participant.avatarUrl ?? "") === (preset.avatarUrl ?? "");
-
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        className={`persona-preset-card ${isApplied ? "is-applied" : ""}`}
-                        onClick={() => {
-                          onChange({ name: preset.name, persona: preset.persona, avatarUrl: preset.avatarUrl });
-                          setSheetView("form");
-                        }}
-                        aria-pressed={isApplied}
-                      >
-                        <span className="persona-preset-card-top">
-                          <ParticipantAvatar
-                            name={preset.name}
-                            avatarUrl={preset.avatarUrl}
-                            className="persona-preset-avatar"
-                            fallbackClassName="persona-preset-avatar-fallback"
-                            imageClassName="avatar-image"
-                          />
-                          <span className="persona-preset-card-copy">
-                            <span className="persona-preset-card-header">
-                              <span className="persona-preset-card-name">{preset.name}</span>
-                              <span className="persona-preset-card-language">{preset.language}</span>
-                            </span>
-                            <span className="persona-preset-card-title">{preset.title}</span>
-                            <span className="persona-preset-card-summary">{preset.summary}</span>
-                          </span>
-                        </span>
-                        <span className="persona-preset-card-cta">{isApplied ? "Applied" : "Apply preset"}</span>
-                      </button>
-                    );
-                  })
-                ) : (
-                  <div className="persona-preset-empty">
-                    No presets match that search yet. Try a name, party, or ideology keyword.
-                  </div>
-                )}
-              </div>
-
-            </>
-          ) : (
-            <>
-              {showPersonaPresets ? (
-                <div className="participant-sheet-actions">
-                  <button
-                    type="button"
-                    onClick={() => setSheetView("presets")}
-                    className="action-button"
-                  >
-                    Presets
-                  </button>
-                </div>
-              ) : null}
-
-              <div className="participant-identity-row">
-                <div className="participant-avatar-anchor" ref={avatarEditorRef}>
-                  <button
-                    type="button"
-                    className="participant-avatar-button"
-                    onClick={() => {
-                      setDraftAvatarUrl(participant.avatarUrl ?? "");
-                      setIsAvatarEditorOpen((current) => !current);
-                    }}
-                    aria-label="Edit participant avatar"
-                    title="Edit participant avatar"
-                  >
-                    <ParticipantAvatar
-                      name={participant.name || "Council member"}
-                      avatarUrl={participant.avatarUrl}
-                      className="participant-avatar-preview"
-                      fallbackClassName="participant-avatar-preview-fallback"
-                      imageClassName="avatar-image"
-                      decorative={false}
-                    />
-                  </button>
-
-                  {isAvatarEditorOpen ? (
-                    <div
-                      className={`participant-avatar-popover ${isAvatarDropActive ? "is-drag-active" : ""}`}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        setIsAvatarDropActive(true);
-                      }}
-                      onDragLeave={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                          setIsAvatarDropActive(false);
-                        }
-                      }}
-                      onDrop={async (event) => {
-                        event.preventDefault();
-                        setIsAvatarDropActive(false);
-                        const droppedFile = Array.from(event.dataTransfer.files).find((file) => file.type.startsWith("image/"));
-
-                        if (droppedFile) {
-                          await applyAvatarFile(droppedFile);
-                        }
-                      }}
-                    >
-                      <div className="participant-avatar-popover-copy">
-                        <strong>Avatar</strong>
-                        <span>Paste a link, import an image, or drag one here.</span>
-                      </div>
-
-                      <input
-                        className="field mono"
-                        value={draftAvatarUrl}
-                        onChange={(event) => setDraftAvatarUrl(event.target.value)}
-                        placeholder="https://... or /avatars/..."
-                      />
-
-                      <input
-                        ref={avatarFileInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="sr-only"
-                        onChange={async (event) => {
-                          const file = event.target.files?.[0];
-                          if (file) {
-                            await applyAvatarFile(file);
-                          }
-                          event.target.value = "";
-                        }}
-                      />
-
-                      <div className="participant-avatar-popover-actions">
-                        <button
-                          type="button"
-                          className="action-button"
-                          onClick={() => avatarFileInputRef.current?.click()}
-                        >
-                          Import image
-                        </button>
-
-                        <button
-                          type="button"
-                          className="action-button action-button-primary"
-                          onClick={() => {
-                            const nextAvatarUrl = draftAvatarUrl.trim();
-                            onChange({ avatarUrl: nextAvatarUrl || undefined });
-                            setIsAvatarEditorOpen(false);
-                            setIsAvatarDropActive(false);
-                          }}
-                        >
-                          Apply link
-                        </button>
-
-                        {participant.avatarUrl ? (
-                          <button
-                            type="button"
-                            className="participant-avatar-clear"
-                            onClick={() => {
-                              setDraftAvatarUrl("");
-                              onChange({ avatarUrl: undefined });
-                              setIsAvatarEditorOpen(false);
-                              setIsAvatarDropActive(false);
-                            }}
-                          >
-                            Remove
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                <FieldShell label="Name">
-                  <input
-                    className="field"
-                    value={participant.name}
-                    onChange={(event) => onChange({ name: event.target.value })}
-                    placeholder="Council member name"
-                  />
-                </FieldShell>
-              </div>
-
-              <FieldShell
-                label="Model"
-                hint="Choose one of the configured OpenRouter models."
-              >
-                <select
-                  className="field mono"
-                  value={participant.model}
-                  onChange={(event) => onChange({ model: event.target.value })}
-                >
-                  {MODEL_SUGGESTIONS.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </select>
-              </FieldShell>
-
-              <FieldShell label="Persona">
-                <textarea
-                  ref={personaTextareaRef}
-                  className="field participant-persona-input"
-                  value={participant.persona}
-                  onChange={(event) => {
-                    event.target.style.height = "0px";
-                    event.target.style.height = `${event.target.scrollHeight}px`;
-                    onChange({ persona: event.target.value });
-                  }}
-                  placeholder="How should this participant think and argue?"
-                />
-              </FieldShell>
-            </>
-          )}
+          <FieldShell label="Persona">
+            <textarea
+              ref={personaTextareaRef}
+              className="field participant-persona-input"
+              value={participant.persona}
+              onChange={(event) => {
+                event.target.style.height = "0px";
+                event.target.style.height = `${event.target.scrollHeight}px`;
+                onChange({ persona: event.target.value });
+              }}
+              placeholder="How should this participant think and argue?"
+            />
+          </FieldShell>
         </div>
 
-        {onRemove && sheetView === "form" ? (
+        {onRemove ? (
           <div className="mt-6 border-t border-[color:var(--line)] pt-5">
             <button
               type="button"
@@ -1139,15 +1355,15 @@ function StudioSettingsModal({
 }
 
 function TranscriptPanel({
-  mode,
   turnCount,
   isRunning,
   markdown,
+  thinkingSpeakerName,
 }: {
-  mode: RunInput["mode"];
   turnCount: number;
   isRunning: boolean;
   markdown: string;
+  thinkingSpeakerName?: string | null;
 }) {
   const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -1163,17 +1379,10 @@ function TranscriptPanel({
   return (
     <article className="transcript-sheet transcript-sheet-inline">
       <div className="transcript-sheet-header">
-        <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">
-            {mode === "debate" ? "Debate Transcript" : "Council Transcript"}
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Live markdown feed</h2>
-        </div>
-
         <div className="transcript-sheet-actions">
           <span className={`transcript-status-chip ${isRunning ? "is-live" : ""}`}>
             <span className="transcript-status-dot" />
-            {isRunning ? "Autoplay" : `${turnCount} turns`}
+            {isRunning ? (thinkingSpeakerName ? `Thinking: ${thinkingSpeakerName}` : "Thinking...") : `${turnCount} turns`}
           </span>
         </div>
       </div>
@@ -1201,6 +1410,7 @@ function TranscriptPanel({
 
 function ChamberStage({
   roster,
+  plannedRounds,
   currentFrame,
   displayedBubbleContent,
   chapters,
@@ -1215,14 +1425,18 @@ function ChamberStage({
   prompt,
   hasSessionStarted,
   panelMode,
-  transcriptMode,
   transcriptTurnCount,
   transcriptMarkdown,
+  isPlaybackPlaying,
   onPanelModeChange,
   onOpenParticipant,
+  onTogglePlayback,
+  onPreviousFrame,
+  onNextFrame,
   onSelectFrame,
 }: {
   roster: ParticipantConfig[];
+  plannedRounds: number;
   currentFrame?: PlaybackFrame;
   displayedBubbleContent: string;
   chapters: TimelineChapter[];
@@ -1237,37 +1451,40 @@ function ChamberStage({
   prompt: string;
   hasSessionStarted: boolean;
   panelMode: StagePanelMode;
-  transcriptMode: RunInput["mode"];
   transcriptTurnCount: number;
   transcriptMarkdown: string;
+  isPlaybackPlaying: boolean;
   onPanelModeChange: (mode: StagePanelMode) => void;
   onOpenParticipant: (id: string) => void;
+  onTogglePlayback: () => void;
+  onPreviousFrame: () => void;
+  onNextFrame: () => void;
   onSelectFrame: (index: number) => void;
 }) {
-  const activeSpeaker =
-    (currentFrame ? roster.find((participant) => participant.id === currentFrame.speakerId) : null) ?? null;
-  const queueStartIndex = currentFrame ? activeFrameIndex : 0;
-  const queueFrames = buildQueueFrameGroups({
+  const plannedQueueTurns = buildPlannedQueueTurns({
+    mode,
+    rounds: plannedRounds,
+    coordinator: roster[0] ?? createDefaultInput().coordinator,
+    members: roster.slice(1),
+  });
+  const queueEntries = buildQueueEntries({
     frames,
     roster,
-    startIndex: queueStartIndex,
-    hasCurrentFrame: Boolean(currentFrame),
+    plannedTurns: plannedQueueTurns,
+    currentFrame,
+    isRunning,
   });
+  const thinkingEntry = isRunning ? queueEntries.find((entry) => entry.state === "thinking") ?? null : null;
+  const focusSpeaker =
+    (currentFrame ? roster.find((participant) => participant.id === currentFrame.speakerId) : null) ??
+    thinkingEntry?.participant ??
+    null;
 
   const hasPlaybackStarted = hasSessionStarted || isRunning || frames.length > 0;
-  const currentTimeMs = currentFrame?.timestampMs ?? 0;
-  const canConfigureActiveSpeaker = Boolean(activeSpeaker) && !(mode === "debate" && isRunning);
-  const bubbleHintLabel = currentFrame
-    ? isBubbleStreaming
-      ? "to finish"
-      : activeFrameIndex < frames.length - 1 || isRunning
-        ? "to continue"
-        : null
-    : isRunning
-      ? "to continue"
-      : null;
-  const currentBubbleKindLabel = currentFrame ? bubbleKindLabel(currentFrame.kind) : null;
-
+  const canConfigureActiveSpeaker = Boolean(focusSpeaker) && mode !== "debate";
+  const canGoPrevious = activeFrameIndex > 0;
+  const canGoNext = activeFrameIndex < frames.length - 1;
+  const isPlayButtonActive = isPlaybackPlaying && (isRunning || canGoNext || isBubbleStreaming);
   return (
     <section className="chamber-shell">
       <div className="chamber-header">
@@ -1275,140 +1492,134 @@ function ChamberStage({
           <h1 className="chamber-runtime-title">{mode === "debate" ? "Live debate" : "Live consensus"}</h1>
           <p className="chamber-runtime-prompt">{prompt.trim() || "No prompt set yet."}</p>
         </div>
+        {hasPlaybackStarted ? (
+          <div className="chamber-runtime-actions">
+            <div className="mode-toggle mode-toggle-compact stage-panel-toggle" aria-label="Stage panel mode">
+              {(["conversation", "transcript"] as const).map((nextPanelMode) => (
+                <button
+                  key={nextPanelMode}
+                  type="button"
+                  onClick={() => onPanelModeChange(nextPanelMode)}
+                  className={`mode-toggle-button mode-toggle-button-compact ${panelMode === nextPanelMode ? "is-selected" : ""}`}
+                >
+                  {nextPanelMode}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {hasPlaybackStarted ? (
         <div className="stage-frame">
-          <div className="mode-toggle mode-toggle-compact stage-panel-toggle" aria-label="Stage panel mode">
-            {(["conversation", "transcript"] as const).map((nextPanelMode) => (
-              <button
-                key={nextPanelMode}
-                type="button"
-                onClick={() => onPanelModeChange(nextPanelMode)}
-                className={`mode-toggle-button mode-toggle-button-compact ${panelMode === nextPanelMode ? "is-selected" : ""}`}
-              >
-                {nextPanelMode}
-              </button>
-            ))}
-          </div>
-
           <div className="cinema-stage">
             <div className="cinema-vignette" />
             <div className="council-floor-glow" />
 
-            <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
-              <p className="speaker-queue-kicker">Up next</p>
-              <div className="speaker-queue-list">
-                {queueFrames.length > 0 ? (
-                  queueFrames.map(({ frame, participant, state, frameIndex }, index) => (
-                    <button
-                      key={frame.id}
-                      type="button"
-                      className={`speaker-queue-item is-${state}`}
-                      onClick={() => onSelectFrame(frameIndex)}
-                      aria-label={`${state === "active" ? "Current" : "Upcoming"} turn: ${frame.speakerName}`}
-                    >
-                    <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
-                    <ParticipantAvatar
-                      name={frame.speakerName}
-                      avatarUrl={participant?.avatarUrl}
-                      className="speaker-queue-avatar"
-                      fallbackClassName="speaker-queue-avatar-fallback"
-                    />
-                    <span className="speaker-queue-copy">
-                      <span className="speaker-queue-name">{frame.speakerName}</span>
-                      <span className="speaker-queue-model mono">
-                          {frame.chapterLabel} · {participant?.model ?? frame.model}
+            {panelMode === "conversation" ? (
+              <aside className="speaker-queue-shell" aria-label="Upcoming speakers">
+                <p className="speaker-queue-kicker">Up next</p>
+                <div className="speaker-queue-list">
+                  {queueEntries.length > 0 ? (
+                    queueEntries.map(({ id, participant, state, frameIndex, speakerName, model, chapterLabel }, index) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`speaker-queue-item is-${state}`}
+                        onClick={() => {
+                          if (frameIndex !== null) {
+                            onSelectFrame(frameIndex);
+                          }
+                        }}
+                        disabled={frameIndex === null}
+                        aria-label={`${state === "active" ? "Current" : state === "thinking" ? "Thinking" : "Upcoming"} turn: ${speakerName}`}
+                      >
+                      <span className="speaker-queue-rank mono">{String(index + 1).padStart(2, "0")}</span>
+                      <ParticipantAvatar
+                        name={speakerName}
+                        avatarUrl={participant?.avatarUrl}
+                        className="speaker-queue-avatar"
+                        fallbackClassName="speaker-queue-avatar-fallback"
+                      />
+                      <span className="speaker-queue-copy">
+                        <span className="speaker-queue-name">{speakerName}</span>
+                        <span className="speaker-queue-model mono">
+                            {chapterLabel} · {participant?.model ?? model}
+                          </span>
                         </span>
-                      </span>
-                      <span className={`speaker-queue-state speaker-queue-state-${state}`}>
-                        {state === "active" ? "active" : "ready"}
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <div className="speaker-queue-empty">
-                    {isRunning ? "Waiting for the first turn to enter the queue." : "Run the council to build the queue."}
-                  </div>
-                )}
-              </div>
-            </aside>
+                        <span className={`speaker-queue-state speaker-queue-state-${state}`}>
+                          {state === "active" ? "active" : state === "thinking" ? "thinking" : "ready"}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="speaker-queue-empty">
+                      {isRunning ? "Wrapping up the final turn." : `${mode === "debate" ? "Debate" : "Council"} complete.`}
+                    </div>
+                  )}
+                </div>
+              </aside>
+            ) : null}
 
             <div className={`speaker-focus-shell ${panelMode === "transcript" ? "speaker-focus-shell-transcript" : ""}`}>
               <div className="speaker-focus-content">
                 {panelMode === "transcript" ? (
                   <TranscriptPanel
-                    mode={transcriptMode}
                     turnCount={transcriptTurnCount}
                     isRunning={isRunning}
                     markdown={transcriptMarkdown}
+                    thinkingSpeakerName={thinkingEntry?.speakerName ?? null}
                   />
                 ) : (
                   <div className="speaker-focus-stack">
                     <div className="speaker-focus-figure">
-                      {canConfigureActiveSpeaker && activeSpeaker ? (
+                      {canConfigureActiveSpeaker && focusSpeaker ? (
                         <button
                           type="button"
                           className="speaker-focus-config"
-                          onClick={() => onOpenParticipant(activeSpeaker.id)}
-                          aria-label={`Configure ${activeSpeaker.name}`}
+                          onClick={() => onOpenParticipant(focusSpeaker.id)}
+                          aria-label={`Configure ${focusSpeaker.name}`}
                         >
                           <SettingsGlyph />
                         </button>
                       ) : null}
 
-                      <div className={`speaker-focus-avatar ${currentFrame ? "is-speaking" : "is-idle"}`} aria-hidden="true">
+                      <div className={`speaker-focus-avatar ${currentFrame || thinkingEntry ? "is-speaking" : "is-idle"}`} aria-hidden="true">
                         <span className="speaker-focus-avatar-ring" />
                         <ParticipantAvatar
-                          name={activeSpeaker?.name ?? "Council"}
-                          avatarUrl={activeSpeaker?.avatarUrl}
+                          name={focusSpeaker?.name ?? "Council"}
+                          avatarUrl={focusSpeaker?.avatarUrl}
                           className="speaker-focus-avatar-core"
                           fallbackClassName="speaker-focus-avatar-fallback"
                         />
                       </div>
 
                       <div className="speaker-focus-meta">
-                        <span className="speaker-focus-name">{activeSpeaker?.name ?? "Council"}</span>
+                        <span className="speaker-focus-name">{focusSpeaker?.name ?? "Council"}</span>
                         <span className="speaker-focus-model mono">
-                          {activeSpeaker?.model ?? (isRunning ? "waiting" : "ready")}
+                          {focusSpeaker?.model ?? (isRunning ? "thinking" : "ready")}
                         </span>
                       </div>
                     </div>
 
-                    <div className={`speaker-focus-bubble ${!currentFrame ? "is-idle" : ""}`}>
+                    <div className={`speaker-focus-bubble ${!currentFrame && !thinkingEntry ? "is-idle" : ""}`}>
                       {currentFrame ? (
                         <article key={currentFrame.id} className="speaker-focus-bubble-card">
                           <p className="stage-bubble-speaker">
                             {currentFrame.speakerName}
-                            {currentBubbleKindLabel ? <span>{currentBubbleKindLabel}</span> : null}
                           </p>
                           <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
                             {displayedBubbleContent || "\u00a0"}
                           </p>
-                          {bubbleHintLabel ? (
-                            <div className="stage-bubble-footer">
-                              <span className="stage-bubble-hint">
-                                Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
-                              </span>
-                            </div>
-                          ) : null}
                         </article>
-                      ) : isRunning ? (
+                      ) : thinkingEntry ? (
                         <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
                           <p className="stage-bubble-speaker">
-                            Chamber
-                            <span>idle</span>
+                            {thinkingEntry.speakerName}
                           </p>
-                          <p className="stage-bubble-copy">
-                            The room is live. The first speech bubble will land here as soon as the coordinator responds.
+                          <p className="stage-bubble-copy stage-bubble-copy-thinking">
+                            Thinking...
                           </p>
-                          {bubbleHintLabel ? (
-                            <div className="stage-bubble-footer">
-                              <span className="stage-bubble-hint">
-                                Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
-                              </span>
-                            </div>
-                          ) : null}
                         </article>
                       ) : (
                         <article className="speaker-focus-bubble-card speaker-focus-bubble-card-muted">
@@ -1425,48 +1636,74 @@ function ChamberStage({
               </div>
             </div>
 
-            <div className="timeline-shell speaker-playbar-shell">
-              <div className="timeline-controls">
-                <div className="timeline-meta">
-                  <div className="timeline-clock mono">
-                    <span>{formatClock(currentTimeMs)}</span>
-                    <span>/</span>
-                    <span>{formatClock(totalDurationMs)}</span>
-                  </div>
-                </div>
-              </div>
+            {panelMode === "conversation" ? (
+              <div className="timeline-shell speaker-playbar-shell">
+                <button
+                  type="button"
+                  className="timeline-button timeline-icon-button"
+                  onClick={onPreviousFrame}
+                  disabled={!canGoPrevious}
+                  aria-label="Previous speech bubble"
+                  title="Previous speech bubble"
+                >
+                  <PreviousGlyph />
+                </button>
 
-              <div className="timeline-track-shell">
-                <div className="timeline-marker-row" aria-hidden="true">
-                  {chapters.map((chapter) => (
-                    <button
-                      key={chapter.id}
-                      type="button"
-                      className="timeline-marker"
-                      style={{
-                        left:
-                          totalDurationMs > 0
-                            ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%`
-                            : "0%",
-                      }}
-                      onClick={() => onSelectFrame(chapter.frameIndex)}
-                      disabled={frames.length === 0}
-                      title={chapter.label}
-                    />
-                  ))}
+                <div className="timeline-track-shell">
+                  <div className="timeline-marker-row" aria-hidden="true">
+                    {chapters.map((chapter) => (
+                      <button
+                        key={chapter.id}
+                        type="button"
+                        className="timeline-marker"
+                        style={{
+                          left:
+                            totalDurationMs > 0
+                              ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%`
+                              : "0%",
+                        }}
+                        onClick={() => onSelectFrame(chapter.frameIndex)}
+                        disabled={frames.length === 0}
+                        title={chapter.label}
+                      />
+                    ))}
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(frames.length - 1, 0)}
+                    value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
+                    onChange={(event) => onSelectFrame(Number(event.target.value))}
+                    disabled={frames.length < 2}
+                    className="timeline-slider"
+                    aria-label="Playback timeline"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={Math.max(frames.length - 1, 0)}
-                  value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
-                  onChange={(event) => onSelectFrame(Number(event.target.value))}
-                  disabled={frames.length < 2}
-                  className="timeline-slider"
-                  aria-label="Playback timeline"
-                />
+
+                <div className="timeline-button-group">
+                  <button
+                    type="button"
+                    className={`timeline-button timeline-icon-button ${isPlayButtonActive ? "timeline-button-primary" : ""}`}
+                    onClick={onTogglePlayback}
+                    aria-label={isPlayButtonActive ? "Pause playback" : "Play playback"}
+                    title={isPlayButtonActive ? "Pause playback" : "Play playback"}
+                  >
+                    {isPlayButtonActive ? <PauseGlyph /> : <PlayGlyph />}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="timeline-button timeline-icon-button"
+                    onClick={onNextFrame}
+                    disabled={!canGoNext}
+                    aria-label="Next speech bubble"
+                    title="Next speech bubble"
+                  >
+                    <NextGlyph />
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1488,6 +1725,7 @@ export function CouncilStudio() {
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showPersonaSelectorModal, setShowPersonaSelectorModal] = useState(false);
   const [studioView, setStudioView] = useState<StudioView>("setup");
   const [panelMode, setPanelMode] = useState<StagePanelMode>("conversation");
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
@@ -1495,8 +1733,8 @@ export function CouncilStudio() {
   const [completedBubbleIds, setCompletedBubbleIds] = useState<Record<string, true>>({});
   const [revealedBubbleId, setRevealedBubbleId] = useState<string | null>(null);
   const [revealedBubbleChars, setRevealedBubbleChars] = useState(0);
-  const [queuedFrameIndex, setQueuedFrameIndex] = useState<number | null>(null);
-  const [autoAdvanceFrameIndex, setAutoAdvanceFrameIndex] = useState<number | null>(null);
+  const [isPlaybackPlaying, setIsPlaybackPlaying] = useState(true);
+  const [frameCompletedAt, setFrameCompletedAt] = useState<number | null>(null);
 
   const roster = [config.coordinator, ...config.members];
   const hasApiKey = apiKey.trim().length > 0;
@@ -1518,6 +1756,8 @@ export function CouncilStudio() {
   const totalDurationMs = timeline.totalDurationMs;
   const currentFrame = frames[Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))];
   const editableParticipant = roster.find((participant) => participant.id === activeEditorId) ?? null;
+  const isTransportEnabled = panelMode === "conversation";
+  const isPlaybackActive = panelMode === "transcript" ? true : isPlaybackPlaying;
   const isBubbleStreaming =
     Boolean(currentFrame) && revealedBubbleChars < (currentFrame?.bubbleContent.length ?? 0);
   const displayedBubbleContent = currentFrame
@@ -1530,8 +1770,6 @@ export function CouncilStudio() {
       setApiKey(storedKey);
       setDraftApiKey(storedKey);
       setShowSettingsModal(false);
-    } else {
-      setShowSettingsModal(true);
     }
     setHasLoadedKey(true);
   }, []);
@@ -1547,42 +1785,53 @@ export function CouncilStudio() {
       if (activeFrameIndex !== 0) {
         setActiveFrameIndex(0);
       }
-      if (queuedFrameIndex !== null) {
-        setQueuedFrameIndex(null);
-      }
       return;
     }
 
     if (activeFrameIndex > frames.length - 1) {
       setActiveFrameIndex(frames.length - 1);
     }
-  }, [activeFrameIndex, frames.length, queuedFrameIndex]);
+  }, [activeFrameIndex, frames.length]);
 
   useEffect(() => {
     if (!currentFrame) {
-      if (revealedBubbleId !== null || revealedBubbleChars !== 0) {
+      if (revealedBubbleId !== null || revealedBubbleChars !== 0 || frameCompletedAt !== null) {
         setRevealedBubbleId(null);
         setRevealedBubbleChars(0);
+        setFrameCompletedAt(null);
       }
       return;
     }
 
     if (revealedBubbleId !== currentFrame.id) {
       setRevealedBubbleId(currentFrame.id);
-      setRevealedBubbleChars(completedBubbleIds[currentFrame.id] ? currentFrame.bubbleContent.length : 0);
+      setRevealedBubbleChars(
+        isPlaybackActive && !completedBubbleIds[currentFrame.id] ? 0 : currentFrame.bubbleContent.length,
+      );
+      setFrameCompletedAt(null);
     }
-  }, [completedBubbleIds, currentFrame, revealedBubbleChars, revealedBubbleId]);
+  }, [completedBubbleIds, currentFrame, frameCompletedAt, isPlaybackActive, revealedBubbleChars, revealedBubbleId]);
 
   useEffect(() => {
-    if (!currentFrame || revealedBubbleChars < currentFrame.bubbleContent.length || completedBubbleIds[currentFrame.id]) {
+    if (!currentFrame || revealedBubbleChars < currentFrame.bubbleContent.length) {
       return;
     }
 
-    setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
-  }, [completedBubbleIds, currentFrame, revealedBubbleChars]);
+    if (!completedBubbleIds[currentFrame.id]) {
+      setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
+    }
+
+    if (frameCompletedAt === null) {
+      setFrameCompletedAt(Date.now());
+    }
+  }, [completedBubbleIds, currentFrame, frameCompletedAt, revealedBubbleChars]);
 
   useEffect(() => {
-    if (!currentFrame || revealedBubbleId !== currentFrame.id) {
+    if (!currentFrame || revealedBubbleId !== currentFrame.id || !isPlaybackActive) {
+      return;
+    }
+
+    if (revealedBubbleChars >= currentFrame.bubbleContent.length) {
       return;
     }
 
@@ -1593,75 +1842,34 @@ export function CouncilStudio() {
     }, 18);
 
     return () => window.clearTimeout(timeoutId);
-  }, [currentFrame, revealedBubbleChars, revealedBubbleId]);
+  }, [currentFrame, isPlaybackActive, revealedBubbleChars, revealedBubbleId]);
 
   useEffect(() => {
-    if (queuedFrameIndex === null || queuedFrameIndex >= frames.length) {
+    if (!isPlaybackActive || !currentFrame || revealedBubbleId !== currentFrame.id) {
       return;
     }
 
-    setActiveFrameIndex(queuedFrameIndex);
-    setQueuedFrameIndex(null);
-  }, [frames.length, queuedFrameIndex]);
-
-  useEffect(() => {
-    if (autoAdvanceFrameIndex === null || autoAdvanceFrameIndex >= frames.length) {
-      return;
-    }
-
-    setActiveFrameIndex(autoAdvanceFrameIndex);
-    setAutoAdvanceFrameIndex(null);
-  }, [autoAdvanceFrameIndex, frames.length]);
-
-  useEffect(() => {
-    if (panelMode === "transcript") {
-      return;
-    }
-
-    if (autoAdvanceFrameIndex !== null) {
-      setAutoAdvanceFrameIndex(null);
-    }
-  }, [autoAdvanceFrameIndex, panelMode]);
-
-  useEffect(() => {
-    if (panelMode !== "transcript") {
-      return;
-    }
-
-    if (!currentFrame) {
-      if (isRunning && frames.length === 0 && autoAdvanceFrameIndex !== 0) {
-        setAutoAdvanceFrameIndex(0);
-      }
-      return;
-    }
-
-    if (revealedBubbleId !== currentFrame.id) {
-      return;
-    }
-
-    if (revealedBubbleChars < currentFrame.bubbleContent.length) {
+    if (revealedBubbleChars < currentFrame.bubbleContent.length || frameCompletedAt === null) {
       return;
     }
 
     const nextIndex = activeFrameIndex + 1;
-    if (nextIndex < frames.length) {
-      const timeoutId = window.setTimeout(() => {
-        setActiveFrameIndex(nextIndex);
-      }, 180);
-
-      return () => window.clearTimeout(timeoutId);
+    if (nextIndex >= frames.length) {
+      return;
     }
 
-    if (isRunning && autoAdvanceFrameIndex !== nextIndex) {
-      setAutoAdvanceFrameIndex(nextIndex);
-    }
+    const remainingDelay = Math.max(0, frameCompletedAt + bubbleHoldDuration(currentFrame.bubbleContent) - Date.now());
+    const timeoutId = window.setTimeout(() => {
+      setActiveFrameIndex(nextIndex);
+    }, remainingDelay);
+
+    return () => window.clearTimeout(timeoutId);
   }, [
     activeFrameIndex,
-    autoAdvanceFrameIndex,
     currentFrame,
     frames.length,
-    isRunning,
-    panelMode,
+    frameCompletedAt,
+    isPlaybackActive,
     revealedBubbleId,
     revealedBubbleChars,
   ]);
@@ -1680,10 +1888,19 @@ export function CouncilStudio() {
     }));
   }
 
-  function addMember() {
+  function addMemberFromPreset(preset: ParticipantPersonaPreset) {
     setConfig((current) => ({
       ...current,
-      members: [...current.members, createMember(current.members.length + 1)],
+      members: [
+        ...current.members,
+        {
+          ...createMember(current.members.length + 1),
+          name: preset.name,
+          model: DEFAULT_PRESET_MODEL,
+          persona: preset.persona,
+          avatarUrl: preset.avatarUrl,
+        },
+      ],
     }));
   }
 
@@ -1702,7 +1919,7 @@ export function CouncilStudio() {
     const trimmed = draftApiKey.trim();
     if (!trimmed) {
       setError("OpenRouter API key is required before running the council.");
-      return;
+      return false;
     }
 
     window.localStorage.setItem(OPENROUTER_KEY_STORAGE, trimmed);
@@ -1710,18 +1927,57 @@ export function CouncilStudio() {
     setDraftApiKey(trimmed);
     setShowSettingsModal(false);
     setError(null);
+    return true;
   }
 
   function selectFrame(index: number) {
     setActiveFrameIndex(index);
-    setQueuedFrameIndex(null);
-    setAutoAdvanceFrameIndex(null);
+    setFrameCompletedAt(null);
+  }
+
+  function showCurrentBubbleFully() {
+    if (!currentFrame) {
+      return;
+    }
+
+    setRevealedBubbleId(currentFrame.id);
+    setRevealedBubbleChars(currentFrame.bubbleContent.length);
+    setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
+    setFrameCompletedAt(Date.now());
+  }
+
+  function togglePlayback() {
+    if (isPlaybackPlaying) {
+      showCurrentBubbleFully();
+      setIsPlaybackPlaying(false);
+      return;
+    }
+
+    if (currentFrame) {
+      setFrameCompletedAt(revealedBubbleChars >= currentFrame.bubbleContent.length ? Date.now() : null);
+    }
+    setIsPlaybackPlaying(true);
+  }
+
+  function selectPreviousFrame() {
+    if (activeFrameIndex === 0) {
+      return;
+    }
+
+    selectFrame(activeFrameIndex - 1);
+  }
+
+  function selectNextFrame() {
+    if (activeFrameIndex >= frames.length - 1) {
+      return;
+    }
+
+    selectFrame(activeFrameIndex + 1);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!hasApiKey) {
-      setShowSettingsModal(true);
       setError("Enter your OpenRouter API key before running the council.");
       return;
     }
@@ -1733,11 +1989,11 @@ export function CouncilStudio() {
     setStudioView("simulation");
     setError(null);
     setActiveFrameIndex(0);
+    setIsPlaybackPlaying(true);
     setCompletedBubbleIds({});
-    setQueuedFrameIndex(null);
-    setAutoAdvanceFrameIndex(null);
     setRevealedBubbleId(null);
     setRevealedBubbleChars(0);
+    setFrameCompletedAt(null);
     setResult({
       mode: config.mode,
       prompt: config.prompt,
@@ -1771,6 +2027,10 @@ export function CouncilStudio() {
       return;
     }
 
+    if (!isTransportEnabled) {
+      return;
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (
@@ -1782,63 +2042,47 @@ export function CouncilStudio() {
         return;
       }
 
-      if (panelMode !== "conversation") {
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          if (activeFrameIndex === 0) {
-            return;
-          }
+      if (event.key === " " || event.code === "Space") {
+        event.preventDefault();
 
-          setQueuedFrameIndex(null);
-          setActiveFrameIndex((current) => Math.max(current - 1, 0));
+        if (isPlaybackPlaying) {
+          if (currentFrame) {
+            setRevealedBubbleId(currentFrame.id);
+            setRevealedBubbleChars(currentFrame.bubbleContent.length);
+            setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
+            setFrameCompletedAt(Date.now());
+          }
+          setIsPlaybackPlaying(false);
+        } else {
+          if (currentFrame) {
+            setFrameCompletedAt(revealedBubbleChars >= currentFrame.bubbleContent.length ? Date.now() : null);
+          }
+          setIsPlaybackPlaying(true);
         }
         return;
       }
 
-      if (event.key === " " || event.code === "Space" || event.key === "ArrowRight") {
+      if (event.key === "Enter" || event.key === "ArrowRight") {
         event.preventDefault();
-
-        if (currentFrame && revealedBubbleChars < currentFrame.bubbleContent.length) {
-          setRevealedBubbleId(currentFrame.id);
-          setRevealedBubbleChars(currentFrame.bubbleContent.length);
-          setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
-          return;
-        }
-
-        if (frames.length === 0) {
-          if (isRunning) {
-            setQueuedFrameIndex(0);
-          }
-          return;
-        }
-
-        const nextIndex = activeFrameIndex + 1;
-        if (nextIndex < frames.length) {
-          setQueuedFrameIndex(null);
-          setActiveFrameIndex(nextIndex);
-          return;
-        }
-
-        if (isRunning) {
-          setQueuedFrameIndex(nextIndex);
+        if (activeFrameIndex < frames.length - 1) {
+          setActiveFrameIndex(activeFrameIndex + 1);
+          setFrameCompletedAt(null);
         }
         return;
       }
 
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        if (activeFrameIndex === 0) {
-          return;
+        if (activeFrameIndex > 0) {
+          setActiveFrameIndex(activeFrameIndex - 1);
+          setFrameCompletedAt(null);
         }
-
-        setQueuedFrameIndex(null);
-        setActiveFrameIndex((current) => Math.max(current - 1, 0));
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeFrameIndex, currentFrame, frames.length, isRunning, panelMode, revealedBubbleChars, studioView]);
+  }, [activeFrameIndex, currentFrame, frames.length, isPlaybackPlaying, isTransportEnabled, revealedBubbleChars, studioView]);
 
   function applyProgressEvent(event: RunProgressEvent) {
     if (event.type === "status") {
@@ -1910,19 +2154,23 @@ export function CouncilStudio() {
           <StudioHero
             config={config}
             apiKey={apiKey}
+            draftApiKey={draftApiKey}
             hasApiKey={hasApiKey}
             canSubmit={hasLoadedKey && hasApiKey && hasPrompt}
             hasLoadedKey={hasLoadedKey}
             isRunning={isRunning}
+            onDraftApiKeyChange={setDraftApiKey}
+            onSaveApiKey={saveApiKey}
             onOpenSettings={() => setShowSettingsModal(true)}
             onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
             onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
-            onAddMember={addMember}
+            onAddMember={() => setShowPersonaSelectorModal(true)}
             onOpenParticipant={openParticipantEditor}
           />
         ) : (
           <ChamberStage
             roster={roster}
+            plannedRounds={config.rounds}
             currentFrame={currentFrame}
             displayedBubbleContent={displayedBubbleContent}
             chapters={chapters}
@@ -1937,11 +2185,14 @@ export function CouncilStudio() {
             prompt={config.prompt}
             hasSessionStarted={studioView === "simulation"}
             panelMode={panelMode}
-            transcriptMode={transcriptMode}
             transcriptTurnCount={transcriptTurns.length}
             transcriptMarkdown={transcriptMarkdown}
+            isPlaybackPlaying={isPlaybackPlaying}
             onPanelModeChange={setPanelMode}
             onOpenParticipant={openParticipantEditor}
+            onTogglePlayback={togglePlayback}
+            onPreviousFrame={selectPreviousFrame}
+            onNextFrame={selectNextFrame}
             onSelectFrame={selectFrame}
           />
         )}
@@ -1963,12 +2214,21 @@ export function CouncilStudio() {
         />
       ) : null}
 
+      {showPersonaSelectorModal ? (
+        <PersonaSelectorModal
+          onClose={() => setShowPersonaSelectorModal(false)}
+          onSelectPreset={(preset) => {
+            addMemberFromPreset(preset);
+            setShowPersonaSelectorModal(false);
+          }}
+        />
+      ) : null}
+
       {editableParticipant ? (
         <ParticipantSettingsSheet
           key={editableParticipant.id}
           roleLabel={editableParticipant.id === config.coordinator.id ? "Coordinator" : "Council member"}
           participant={editableParticipant}
-          showPersonaPresets={editableParticipant.id !== config.coordinator.id}
           onChange={(patch) => {
             if (editableParticipant.id === config.coordinator.id) {
               updateCoordinator(patch);
