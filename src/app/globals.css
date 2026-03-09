@@ -433,8 +433,40 @@ select {
   gap: 0.55rem;
 }
 
+.hero-api-chip {
+  padding-right: 0.35rem;
+}
+
 .hero-status-row .status-chip strong {
   color: var(--foreground);
+}
+
+.hero-api-edit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 248, 237, 0.08);
+  color: var(--foreground);
+  padding: 0;
+  transition:
+    transform 180ms ease,
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.hero-api-edit-button svg {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
+.hero-api-edit-button:hover {
+  transform: translateY(-1px);
+  background: rgba(240, 171, 105, 0.18);
+  color: var(--accent-strong);
 }
 
 .hero-prompt-panel {
@@ -459,34 +491,6 @@ select {
 
 .hero-mode-toggle {
   width: fit-content;
-}
-
-.hero-stat-grid {
-  display: grid;
-  gap: 0.8rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.hero-stat-card {
-  display: grid;
-  gap: 0.45rem;
-  border-radius: 1.1rem;
-  border: 1px solid rgba(255, 231, 198, 0.12);
-  background: rgba(255, 248, 237, 0.04);
-  padding: 0.9rem 0.95rem;
-}
-
-.hero-stat-card span {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.hero-stat-card strong {
-  font-size: 1.1rem;
-  color: var(--foreground);
 }
 
 .hero-launch-actions {
@@ -1995,10 +1999,6 @@ select {
     max-width: none;
   }
 
-  .hero-stat-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
   .cinema-stage {
     min-height: 24rem;
   }
@@ -2081,10 +2081,6 @@ select {
   .hero-launch-actions .action-button {
     width: 100%;
     justify-content: center;
-  }
-
-  .hero-stat-grid {
-    grid-template-columns: 1fr;
   }
 
   .hero-roster-grid {

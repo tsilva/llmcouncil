@@ -274,6 +274,15 @@ function PlayGlyph() {
   );
 }
 
+function PencilGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 20h4.2l9.9-9.9a1.8 1.8 0 0 0 0-2.55l-1.65-1.65a1.8 1.8 0 0 0-2.55 0L4 15.8V20Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m12.8 6.2 5 5" />
+    </svg>
+  );
+}
+
 function modeSummary(mode: RunInput["mode"]): string {
   if (mode === "debate") {
     return "Coordinator opens, members respond in rounds, then the room closes with a synthesis.";
@@ -353,15 +362,24 @@ function StudioHero({
       <div className="hero-grid">
         <section className="hero-panel hero-copy-panel">
           <p className="hero-kicker">LLM Council</p>
-          <h1 className="hero-title">Shape the room before the simulation begins.</h1>
+          <h1 className="hero-title">LLM Council</h1>
           <p className="hero-body">
             Choose the prompt, set the council, and launch. Once you hit play, the setup surface clears out and the chamber takes over.
           </p>
 
           <div className="hero-status-row">
-            <span className="status-chip">
-              API key
+            <span className="status-chip hero-api-chip">
+              <span>API key</span>
               <strong className="mono">{apiKeyLabel}</strong>
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="hero-api-edit-button"
+                aria-label="Edit API key"
+                title="Edit API key"
+              >
+                <PencilGlyph />
+              </button>
             </span>
             <span className="status-chip">
               {config.members.length + 1} voices
@@ -399,17 +417,6 @@ function StudioHero({
                 {nextMode}
               </button>
             ))}
-          </div>
-
-          <div className="hero-stat-grid">
-            <div className="hero-stat-card">
-              <span>Temperature</span>
-              <strong>{config.temperature.toFixed(1)}</strong>
-            </div>
-            <div className="hero-stat-card">
-              <span>Max tokens</span>
-              <strong>{config.maxCompletionTokens}</strong>
-            </div>
           </div>
 
           <div className="hero-launch-actions">

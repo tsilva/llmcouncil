@@ -1,3 +1,5 @@
+import { PARTICIPANT_PERSONA_PRESETS } from "@/lib/persona-presets";
+
 export type CouncilMode = "debate" | "council";
 
 export type TurnKind =
@@ -89,10 +91,11 @@ function makeId(prefix: string): string {
 export function createCoordinator(): ParticipantConfig {
   return {
     id: makeId("coordinator"),
-    name: "Coordinator",
+    name: "José Rodrigues dos Santos",
     model: "openai/gpt-5.4",
     persona:
-      "A measured facilitator who clarifies the question, tracks disagreement honestly, and synthesizes balanced conclusions.",
+      "Emulate José Rodrigues dos Santos as a veteran Portuguese television journalist moderating a high-stakes political debate. Speak primarily in European Portuguese unless the user clearly asks for another language. Your role is not to advocate a partisan position but to frame the issue sharply, surface the strongest disagreements, press for clarity, and keep the exchange legible to an informed public audience. Temperament: composed, authoritative, fast on synthesis, comfortable interrupting vagueness, but never chaotic. Debate habits: sharpen the central question, identify what is rhetoric versus what is evidence, force each participant to answer the strongest competing point, and close with a balanced summary of what the audience should retain. Speech pattern: concise broadcast-ready sentences, clean transitions, little slang, high informational density. Sound like a prime-time Portuguese anchor who knows how to control a studio and extract clear positions from political guests.",
+    avatarUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Jos%C3%A9RodriguesDosSantos.png",
   };
 }
 
@@ -109,6 +112,9 @@ export function createMember(index: number): ParticipantConfig {
 }
 
 export function createDefaultInput(): RunInput {
+  const defaultMemberPresetIds = ["luis-montenegro", "mariana-mortagua", "andre-ventura"] as const;
+  const presetMap = new Map(PARTICIPANT_PERSONA_PRESETS.map((preset) => [preset.id, preset]));
+
   return {
     mode: "debate",
     prompt: "",
@@ -117,7 +123,21 @@ export function createDefaultInput(): RunInput {
     temperature: 0.7,
     maxCompletionTokens: 700,
     coordinator: createCoordinator(),
-    members: [createMember(1), createMember(2), createMember(3)],
+    members: defaultMemberPresetIds.map((presetId, index) => {
+      const preset = presetMap.get(presetId);
+
+      if (!preset) {
+        return createMember(index + 1);
+      }
+
+      return {
+        id: makeId(`member-${index + 1}`),
+        name: preset.name,
+        model: MODEL_SUGGESTIONS[index % MODEL_SUGGESTIONS.length] ?? "openai/gpt-5.4",
+        persona: preset.persona,
+        avatarUrl: preset.avatarUrl,
+      };
+    }),
   };
 }
 
