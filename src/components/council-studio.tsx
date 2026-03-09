@@ -369,6 +369,153 @@ function ParticipantSettingsSheet({
   );
 }
 
+function StudioSettingsModal({
+  hasApiKey,
+  apiKey,
+  draftApiKey,
+  usage,
+  config,
+  onDraftApiKeyChange,
+  onSaveApiKey,
+  onClose,
+  onConfigChange,
+}: {
+  hasApiKey: boolean;
+  apiKey: string;
+  draftApiKey: string;
+  usage: RunResult["usage"];
+  config: RunInput;
+  onDraftApiKeyChange: (value: string) => void;
+  onSaveApiKey: () => void;
+  onClose: () => void;
+  onConfigChange: (patch: Partial<RunInput>) => void;
+}) {
+  return (
+    <div className="settings-modal-backdrop">
+      {hasApiKey ? (
+        <button type="button" className="settings-modal-dismiss" aria-label="Close settings" onClick={onClose} />
+      ) : (
+        <div className="settings-modal-dismiss" aria-hidden="true" />
+      )}
+
+      <section className="settings-sheet settings-modal-panel w-full max-w-3xl p-6 sm:p-7">
+        <div className="settings-modal-header">
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Council Settings</p>
+            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Room controls and run options</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-[color:var(--ink-soft)]">
+              Manage the local OpenRouter key and adjust the council-wide run settings from one place.
+            </p>
+          </div>
+
+          {hasApiKey ? (
+            <button type="button" onClick={onClose} className="action-button">
+              Close
+            </button>
+          ) : null}
+        </div>
+
+        <div className="settings-stat-grid">
+          <div className="settings-stat-card">
+            <span>API key</span>
+            <strong className="mono">{hasApiKey ? maskApiKey(apiKey) : "Missing"}</strong>
+          </div>
+          <div className="settings-stat-card">
+            <span>Prompt tokens</span>
+            <strong>{usage.promptTokens.toLocaleString()}</strong>
+          </div>
+          <div className="settings-stat-card">
+            <span>Total tokens</span>
+            <strong>{usage.totalTokens.toLocaleString()}</strong>
+          </div>
+        </div>
+
+        <div className="settings-modal-grid">
+          <div className="settings-modal-stack">
+            <FieldShell
+              label="OpenRouter API Key"
+              hint="Stored locally in this browser. Requests go directly from the client to OpenRouter."
+            >
+              <input
+                className="field mono"
+                type="password"
+                autoFocus={!hasApiKey}
+                value={draftApiKey}
+                onChange={(event) => onDraftApiKeyChange(event.target.value)}
+                placeholder="sk-or-v1-..."
+              />
+            </FieldShell>
+
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={onSaveApiKey} className="action-button action-button-primary">
+                Save key
+              </button>
+              {hasApiKey ? (
+                <button type="button" onClick={onClose} className="action-button">
+                  Done
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="settings-modal-stack">
+            <FieldShell
+              label="Shared Directive"
+              hint="Prepended for every participant before their individual persona."
+            >
+              <textarea
+                className="field min-h-32 resize-y"
+                value={config.sharedDirective}
+                onChange={(event) => onConfigChange({ sharedDirective: event.target.value })}
+              />
+            </FieldShell>
+
+            <div className="settings-number-grid">
+              <FieldShell
+                label="Rounds"
+                hint={config.mode === "debate" ? "Each round gives every member one turn." : "Used only in debate mode."}
+              >
+                <input
+                  className="field"
+                  type="number"
+                  min={1}
+                  max={6}
+                  value={config.rounds}
+                  onChange={(event) => onConfigChange({ rounds: Number(event.target.value) || 1 })}
+                />
+              </FieldShell>
+
+              <FieldShell label="Temperature">
+                <input
+                  className="field"
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={config.temperature}
+                  onChange={(event) => onConfigChange({ temperature: Number(event.target.value) || 0 })}
+                />
+              </FieldShell>
+
+              <FieldShell label="Max Completion Tokens">
+                <input
+                  className="field"
+                  type="number"
+                  min={200}
+                  max={4000}
+                  step={50}
+                  value={config.maxCompletionTokens}
+                  onChange={(event) => onConfigChange({ maxCompletionTokens: Number(event.target.value) || 200 })}
+                />
+              </FieldShell>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ChamberStage({
   roster,
   currentFrame,
@@ -388,6 +535,7 @@ function ChamberStage({
   hasRun,
   hasLoadedKey,
   hasApiKey,
+  onOpenSettings,
   onModeChange,
   onPromptChange,
   onAddMember,
@@ -416,6 +564,7 @@ function ChamberStage({
   hasRun: boolean;
   hasLoadedKey: boolean;
   hasApiKey: boolean;
+  onOpenSettings: () => void;
   onModeChange: (mode: RunInput["mode"]) => void;
   onPromptChange: (value: string) => void;
   onAddMember: () => void;
@@ -528,6 +677,11 @@ function ChamberStage({
               </span>
             ) : null}
           </div>
+
+          <button type="button" onClick={onOpenSettings} className="stage-settings-button">
+            <SettingsGlyph />
+            <span>Settings</span>
+          </button>
         </div>
 
         <div className="cinema-stage">
@@ -727,7 +881,7 @@ export function CouncilStudio() {
   const [apiKey, setApiKey] = useState("");
   const [draftApiKey, setDraftApiKey] = useState("");
   const [hasLoadedKey, setHasLoadedKey] = useState(false);
-  const [showKeyPrompt, setShowKeyPrompt] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [activeFrameIndex, setActiveFrameIndex] = useState(0);
@@ -756,9 +910,9 @@ export function CouncilStudio() {
     if (storedKey) {
       setApiKey(storedKey);
       setDraftApiKey(storedKey);
-      setShowKeyPrompt(false);
+      setShowSettingsModal(false);
     } else {
-      setShowKeyPrompt(true);
+      setShowSettingsModal(true);
     }
     setHasLoadedKey(true);
   }, []);
@@ -873,7 +1027,7 @@ export function CouncilStudio() {
     window.localStorage.setItem(OPENROUTER_KEY_STORAGE, trimmed);
     setApiKey(trimmed);
     setDraftApiKey(trimmed);
-    setShowKeyPrompt(false);
+    setShowSettingsModal(false);
     setError(null);
   }
 
@@ -938,7 +1092,7 @@ export function CouncilStudio() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!hasApiKey) {
-      setShowKeyPrompt(true);
+      setShowSettingsModal(true);
       setError("Enter your OpenRouter API key before running the council.");
       return;
     }
@@ -1124,6 +1278,7 @@ export function CouncilStudio() {
           hasRun={Boolean(result)}
           hasLoadedKey={hasLoadedKey}
           hasApiKey={hasApiKey}
+          onOpenSettings={() => setShowSettingsModal(true)}
           onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
           onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
           onAddMember={addMember}
@@ -1144,147 +1299,23 @@ export function CouncilStudio() {
           onResetTimeline={resetTimeline}
           onAdvanceFrame={advanceFrame}
         />
-
-        <section className="director-dock">
-          <div className="director-bar">
-            <div className="director-copy">
-              <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Director Dock</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[color:var(--foreground)]">
-                Tune the room only when needed.
-              </h2>
-            </div>
-
-            <div className="director-actions">
-              <div className="director-chip">
-                <span>API key</span>
-                <button type="button" onClick={() => setShowKeyPrompt(true)} className="director-chip-action mono">
-                  {hasApiKey ? maskApiKey(apiKey) : "Add key"}
-                </button>
-              </div>
-              <div className="director-chip">
-                <span>Prompt tokens</span>
-                <strong>{usage.promptTokens.toLocaleString()}</strong>
-              </div>
-              <div className="director-chip">
-                <span>Total tokens</span>
-                <strong>{usage.totalTokens.toLocaleString()}</strong>
-              </div>
-            </div>
-          </div>
-
-          <details className="director-panel director-details">
-            <summary>Advanced run settings</summary>
-            <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-              <FieldShell
-                label="Shared Directive"
-                hint="Prepended for every participant before their individual persona."
-              >
-                <textarea
-                  className="field min-h-32 resize-y"
-                  value={config.sharedDirective}
-                  onChange={(event) =>
-                    setConfig((current) => ({ ...current, sharedDirective: event.target.value }))
-                  }
-                />
-              </FieldShell>
-
-              <div className="grid gap-5 sm:grid-cols-3 lg:grid-cols-1">
-                <FieldShell
-                  label="Rounds"
-                  hint={config.mode === "debate" ? "Each round gives every member one turn." : "Used only in debate mode."}
-                >
-                  <input
-                    className="field"
-                    type="number"
-                    min={1}
-                    max={6}
-                    value={config.rounds}
-                    onChange={(event) =>
-                      setConfig((current) => ({ ...current, rounds: Number(event.target.value) || 1 }))
-                    }
-                  />
-                </FieldShell>
-
-                <FieldShell label="Temperature">
-                  <input
-                    className="field"
-                    type="number"
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    value={config.temperature}
-                    onChange={(event) =>
-                      setConfig((current) => ({
-                        ...current,
-                        temperature: Number(event.target.value) || 0,
-                      }))
-                    }
-                  />
-                </FieldShell>
-
-                <FieldShell label="Max Completion Tokens">
-                  <input
-                    className="field"
-                    type="number"
-                    min={200}
-                    max={4000}
-                    step={50}
-                    value={config.maxCompletionTokens}
-                    onChange={(event) =>
-                      setConfig((current) => ({
-                        ...current,
-                        maxCompletionTokens: Number(event.target.value) || 200,
-                      }))
-                    }
-                  />
-                </FieldShell>
-              </div>
-            </div>
-          </details>
-        </section>
       </form>
 
-      {hasLoadedKey && showKeyPrompt ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(6,9,12,0.6)] p-4 backdrop-blur-sm">
-          <section className="settings-sheet w-full max-w-xl p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">OpenRouter Key</p>
-            <h2 className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">Store the key in this browser</h2>
-            <p className="mt-3 text-sm leading-6 text-[color:var(--ink-soft)]">
-              Requests go directly from the client to OpenRouter. The key stays local to this browser and can be changed any time.
-            </p>
-
-            <div className="mt-5">
-              <FieldShell label="OpenRouter API Key">
-                <input
-                  className="field mono"
-                  type="password"
-                  autoFocus
-                  value={draftApiKey}
-                  onChange={(event) => setDraftApiKey(event.target.value)}
-                  placeholder="sk-or-v1-..."
-                />
-              </FieldShell>
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button type="button" onClick={saveApiKey} className="action-button action-button-primary">
-                Save key
-              </button>
-              {hasApiKey ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraftApiKey(apiKey);
-                    setShowKeyPrompt(false);
-                  }}
-                  className="action-button"
-                >
-                  Cancel
-                </button>
-              ) : null}
-            </div>
-          </section>
-        </div>
+      {hasLoadedKey && showSettingsModal ? (
+        <StudioSettingsModal
+          hasApiKey={hasApiKey}
+          apiKey={apiKey}
+          draftApiKey={draftApiKey}
+          usage={usage}
+          config={config}
+          onDraftApiKeyChange={setDraftApiKey}
+          onSaveApiKey={saveApiKey}
+          onClose={() => {
+            setDraftApiKey(apiKey);
+            setShowSettingsModal(false);
+          }}
+          onConfigChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
+        />
       ) : null}
 
       {editableParticipant ? (

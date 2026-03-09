@@ -109,7 +109,6 @@ select {
 }
 
 .chamber-shell,
-.director-dock,
 .settings-sheet {
   border-radius: 2rem;
   border: 1px solid var(--line);
@@ -154,6 +153,38 @@ select {
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
+}
+
+.stage-settings-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 231, 198, 0.14);
+  background: rgba(255, 248, 237, 0.05);
+  padding: 0.55rem 0.82rem;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.stage-settings-button svg {
+  width: 0.92rem;
+  height: 0.92rem;
+}
+
+.stage-settings-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(240, 171, 105, 0.42);
+  background: rgba(255, 248, 237, 0.08);
+  color: var(--accent-strong);
 }
 
 .cinema-stage {
@@ -514,8 +545,8 @@ select {
 
 .timeline-button,
 .action-button,
-.director-chip-action,
-.mode-toggle-button {
+.mode-toggle-button,
+.stage-settings-button {
   transition:
     transform 180ms ease,
     border-color 180ms ease,
@@ -551,7 +582,6 @@ select {
 
 .timeline-button:hover:not(:disabled),
 .action-button:hover:not(:disabled),
-.director-chip-action:hover,
 .mode-toggle-button:hover {
   transform: translateY(-1px);
 }
@@ -748,73 +778,6 @@ select {
   gap: 0.45rem;
 }
 
-.director-dock {
-  padding: 1rem;
-}
-
-.director-bar {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.director-copy {
-  max-width: 35rem;
-}
-
-.director-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-}
-
-.director-chip {
-  display: grid;
-  gap: 0.28rem;
-  min-width: 7.4rem;
-  border-radius: 1rem;
-  border: 1px solid rgba(255, 231, 198, 0.12);
-  background: rgba(255, 248, 237, 0.04);
-  padding: 0.7rem 0.85rem;
-  font-size: 0.74rem;
-  color: var(--muted);
-}
-
-.director-chip strong {
-  font-size: 0.9rem;
-  color: var(--foreground);
-}
-
-.director-chip-action {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--foreground);
-  cursor: pointer;
-  text-align: left;
-}
-
-.director-grid {
-  display: grid;
-  gap: 0.8rem;
-  margin-top: 0.8rem;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.director-panel {
-  border-radius: 1.2rem;
-  border: 1px solid rgba(255, 231, 198, 0.1);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 30%),
-    rgba(255, 248, 237, 0.03);
-  padding: 0.9rem;
-}
-
-.director-panel-main {
-  min-height: 100%;
-}
-
 .mode-toggle {
   display: inline-flex;
   gap: 0.35rem;
@@ -847,36 +810,87 @@ select {
   font-size: 0.78rem;
 }
 
-.director-details summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--foreground);
-  font-weight: 600;
-}
-
-.director-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.director-details summary::after {
-  content: "Show";
-  float: right;
-  color: var(--muted);
-  font-size: 0.8rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.director-details[open] summary::after {
-  content: "Hide";
-}
-
 .settings-sheet {
   border-radius: 0;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 25%),
     rgba(10, 15, 21, 0.98);
+}
+
+.settings-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 9, 12, 0.6);
+  padding: 1rem;
+  backdrop-filter: blur(8px);
+}
+
+.settings-modal-dismiss {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.settings-modal-panel {
+  position: relative;
+  border-radius: 2rem;
+  max-height: min(100%, 46rem);
+  overflow: auto;
+}
+
+.settings-modal-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-stat-grid {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-stat-card {
+  display: grid;
+  gap: 0.35rem;
+  border-radius: 1.1rem;
+  border: 1px solid rgba(255, 231, 198, 0.12);
+  background: rgba(255, 248, 237, 0.04);
+  padding: 0.85rem 0.95rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.settings-stat-card strong {
+  font-size: 0.94rem;
+  color: var(--foreground);
+}
+
+.settings-modal-grid {
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+}
+
+.settings-modal-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-number-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 @keyframes bubble-in {
@@ -904,7 +918,7 @@ select {
 }
 
 @media (max-width: 1180px) {
-  .director-grid {
+  .settings-modal-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -932,11 +946,14 @@ select {
   .stage-bubble {
     width: min(20rem, calc(100% - 1rem));
   }
+
+  .settings-number-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
-  .chamber-shell,
-  .director-dock {
+  .chamber-shell {
     padding: 0.8rem;
     border-radius: 1.2rem;
   }
@@ -987,6 +1004,11 @@ select {
     gap: 0.55rem;
   }
 
+  .stage-settings-button {
+    width: 100%;
+    justify-content: center;
+  }
+
   .chamber-control-actions {
     width: 100%;
   }
@@ -1003,6 +1025,11 @@ select {
 
   .timeline-clock {
     min-height: 2rem;
+  }
+
+  .settings-stat-grid,
+  .settings-number-grid {
+    grid-template-columns: 1fr;
   }
 
   .settings-sheet {
