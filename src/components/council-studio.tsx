@@ -157,32 +157,28 @@ function buildPlaybackTimeline(result: RunResult | null): {
 }
 
 function seatPosition(index: number, total: number): { left: number; top: number } {
-  if (index === 0) {
-    return { left: 50, top: 62 };
-  }
-
-  const memberIndex = index - 1;
-  const depth = Math.floor(memberIndex / 2);
-  const side = memberIndex % 2 === 0 ? -1 : 1;
-  const baseOffset = total <= 4 ? 18 : total <= 6 ? 15 : 13;
-  const stepOffset = total <= 4 ? 14 : total <= 6 ? 12 : 10;
+  const leftStart = total <= 4 ? 18 : 12;
+  const leftEnd = total <= 4 ? 82 : 88;
+  const progress = total <= 1 ? 0.5 : index / (total - 1);
 
   return {
-    left: Math.max(8, Math.min(92, 50 + side * (baseOffset + depth * stepOffset))),
-    top: 64 + Math.min(depth, 2) * 2.4,
+    left: leftStart + (leftEnd - leftStart) * progress,
+    top: total <= 4 ? 30 : 28,
   };
 }
 
-function bubblePlacement(): {
+function bubblePlacement(position: { left: number; top: number }, total: number): {
   className: string;
   style: React.CSSProperties;
 } {
+  const bubbleTop = Math.min(position.top + (total <= 4 ? 18 : 16), 72);
+
   return {
-    className: "stage-bubble-center",
+    className: "stage-bubble-track",
     style: {
-      left: "50%",
-      top: "10%",
-      transform: "translateX(-50%)",
+      left: `${position.left}%`,
+      top: `${bubbleTop}%`,
+      transform: "translate(-50%, 0)",
     },
   };
 }
@@ -218,51 +214,11 @@ function SettingsGlyph() {
   );
 }
 
-function StepBackGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 6v12" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="m17.5 7-7 5 7 5V7Z" />
-    </svg>
-  );
-}
-
-function RestartGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7 6.5H3.5V3" />
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 6.5A8.5 8.5 0 1 1 4.7 17"
-      />
-    </svg>
-  );
-}
-
-function StepForwardGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M17.5 6v12" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="m6.5 7 7 5-7 5V7Z" />
-    </svg>
-  );
-}
-
 function WaitingGlyph() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
       <circle cx="12" cy="12" r="8" opacity="0.35" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v5l3 2" />
-    </svg>
-  );
-}
-
-function FinishGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m6.5 7 5.25 5-5.25 5V7Z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="m12.25 7 5.25 5-5.25 5V7Z" />
     </svg>
   );
 }
@@ -285,6 +241,30 @@ function HandGlyph() {
       />
     </svg>
   );
+}
+
+function StatusGlyph({
+  isRunning,
+  hasRun,
+  queuedFrameIndex,
+}: {
+  isRunning: boolean;
+  hasRun: boolean;
+  queuedFrameIndex: number | null;
+}) {
+  if (queuedFrameIndex !== null) {
+    return <WaitingGlyph />;
+  }
+
+  if (isRunning) {
+    return <SparkGlyph />;
+  }
+
+  if (hasRun) {
+    return <HandGlyph />;
+  }
+
+  return <HandGlyph />;
 }
 
 function ParticipantSettingsSheet({
@@ -373,7 +353,6 @@ function StudioSettingsModal({
   hasApiKey,
   apiKey,
   draftApiKey,
-  usage,
   config,
   onDraftApiKeyChange,
   onSaveApiKey,
@@ -383,7 +362,6 @@ function StudioSettingsModal({
   hasApiKey: boolean;
   apiKey: string;
   draftApiKey: string;
-  usage: RunResult["usage"];
   config: RunInput;
   onDraftApiKeyChange: (value: string) => void;
   onSaveApiKey: () => void;
@@ -419,14 +397,6 @@ function StudioSettingsModal({
           <div className="settings-stat-card">
             <span>API key</span>
             <strong className="mono">{hasApiKey ? maskApiKey(apiKey) : "Missing"}</strong>
-          </div>
-          <div className="settings-stat-card">
-            <span>Prompt tokens</span>
-            <strong>{usage.promptTokens.toLocaleString()}</strong>
-          </div>
-          <div className="settings-stat-card">
-            <span>Total tokens</span>
-            <strong>{usage.totalTokens.toLocaleString()}</strong>
           </div>
         </div>
 
@@ -539,12 +509,8 @@ function ChamberStage({
   onModeChange,
   onPromptChange,
   onAddMember,
-  onReset,
   onOpenParticipant,
   onSelectFrame,
-  onPreviousFrame,
-  onResetTimeline,
-  onAdvanceFrame,
 }: {
   roster: ParticipantConfig[];
   currentFrame?: PlaybackFrame;
@@ -568,23 +534,18 @@ function ChamberStage({
   onModeChange: (mode: RunInput["mode"]) => void;
   onPromptChange: (value: string) => void;
   onAddMember: () => void;
-  onReset: () => void;
   onOpenParticipant: (id: string) => void;
   onSelectFrame: (index: number) => void;
-  onPreviousFrame: () => void;
-  onResetTimeline: () => void;
-  onAdvanceFrame: () => void;
 }) {
-  const bubble = currentFrame
-    ? bubblePlacement()
-    : {
-        className: "stage-bubble-center",
-        style: {
-          left: "50%",
-          top: "12%",
-          transform: "translateX(-50%)",
-        },
-      };
+  const seatPositions = roster.map((_, index) => seatPosition(index, roster.length));
+  const activeSpeakerIndex = currentFrame
+    ? Math.max(
+        0,
+        roster.findIndex((participant) => participant.id === currentFrame.speakerId),
+      )
+    : 0;
+  const bubbleAnchor = seatPositions[activeSpeakerIndex] ?? { left: 50, top: 24 };
+  const bubble = bubblePlacement(bubbleAnchor, roster.length);
   const currentTimeMs = currentFrame?.timestampMs ?? 0;
   const currentChapter =
     chapters.reduce<TimelineChapter | null>((match, chapter) => {
@@ -600,7 +561,9 @@ function ChamberStage({
       ? "Waiting for the first line"
       : "Standby";
   const playbackStateLabel =
-    queuedFrameIndex !== null ? "Queued" : isRunning ? "Live" : "Manual";
+    queuedFrameIndex !== null ? "Queued" : isRunning ? "Live" : hasRun ? "Replay" : "Standby";
+  const combinedStatusLabel = statusMessage ? `${playbackStateLabel} · ${statusMessage}` : playbackStateLabel;
+  const showStatusPill = queuedFrameIndex !== null || isRunning || hasRun || Boolean(statusMessage);
   const bubbleHintLabel = currentFrame
     ? isBubbleStreaming
       ? "to finish"
@@ -613,19 +576,22 @@ function ChamberStage({
 
   return (
     <section className="chamber-shell">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">LLM Council</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="status-chip">{isRunning ? "Live" : hasRun ? "Replay" : "Standby"}</span>
-          {statusMessage ? <span className="status-chip status-chip-muted">{statusMessage}</span> : null}
-        </div>
+      <button
+        type="button"
+        onClick={onOpenSettings}
+        className="stage-settings-button stage-settings-button-floating"
+        aria-label="Open settings"
+        title="Settings"
+      >
+        <SettingsGlyph />
+      </button>
+
+      <div className="mb-5">
+        <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">LLM Council</p>
       </div>
 
       <div className="chamber-control-bar">
         <label className="chamber-prompt-shell" htmlFor="council-prompt">
-          <span className="chamber-control-label">Prompt</span>
           <input
             id="council-prompt"
             className="field chamber-prompt-input"
@@ -660,10 +626,6 @@ function ChamberStage({
           <button type="button" onClick={onAddMember} className="action-button action-button-compact">
             Add member
           </button>
-
-          <button type="button" onClick={onReset} className="action-button action-button-compact">
-            Reset
-          </button>
         </div>
       </div>
 
@@ -677,23 +639,62 @@ function ChamberStage({
               </span>
             ) : null}
           </div>
+        </div>
 
-          <button type="button" onClick={onOpenSettings} className="stage-settings-button">
-            <SettingsGlyph />
-            <span>Settings</span>
-          </button>
+        <div className="timeline-shell">
+          <div className="timeline-controls">
+            <div className="timeline-meta">
+              {showStatusPill ? (
+                <span className="timeline-pill timeline-status-pill">
+                  <StatusGlyph isRunning={isRunning} hasRun={hasRun} queuedFrameIndex={queuedFrameIndex} />
+                  {combinedStatusLabel}
+                </span>
+              ) : null}
+              {currentChapter ? <span className="timeline-pill timeline-pill-muted">{currentChapter.label}</span> : null}
+              <div className="timeline-clock mono">
+                <span>{formatClock(currentTimeMs)}</span>
+                <span>/</span>
+                <span>{formatClock(totalDurationMs)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="timeline-track-shell">
+            <div className="timeline-marker-row" aria-hidden="true">
+              {chapters.map((chapter) => (
+                <button
+                  key={chapter.id}
+                  type="button"
+                  className="timeline-marker"
+                  style={{
+                    left:
+                      totalDurationMs > 0 ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%` : "0%",
+                  }}
+                  onClick={() => onSelectFrame(chapter.frameIndex)}
+                  disabled={frames.length === 0}
+                  title={chapter.label}
+                />
+              ))}
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(frames.length - 1, 0)}
+              value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
+              onChange={(event) => onSelectFrame(Number(event.target.value))}
+              disabled={frames.length < 2}
+              className="timeline-slider"
+              aria-label="Playback timeline"
+            />
+          </div>
         </div>
 
         <div className="cinema-stage">
           <div className="cinema-vignette" />
           <div className="council-floor-glow" />
-          <div className="hero-table-shadow" />
-          <div className="hero-table">
-            <div className="hero-table-inner" />
-          </div>
 
           {roster.map((participant, index) => {
-            const position = seatPosition(index, roster.length);
+            const position = seatPositions[index] ?? { left: 50, top: 24 };
             const isSpeaking = participant.id === currentFrame?.speakerId;
 
             return (
@@ -765,104 +766,6 @@ function ChamberStage({
           </div>
         </div>
 
-        <div className="timeline-shell">
-          <div className="timeline-controls">
-            <div className="timeline-button-group">
-              <button
-                type="button"
-                onClick={onPreviousFrame}
-                disabled={frames.length === 0 || activeFrameIndex === 0}
-                className="timeline-button timeline-icon-button"
-                aria-label="Previous bubble"
-                title="Previous bubble"
-              >
-                <StepBackGlyph />
-              </button>
-              <button
-                type="button"
-                onClick={onResetTimeline}
-                disabled={frames.length === 0 || activeFrameIndex === 0}
-                className="timeline-button timeline-button-primary timeline-icon-button"
-                aria-label="Restart playback"
-                title="Restart playback"
-              >
-                <RestartGlyph />
-              </button>
-              <button
-                type="button"
-                onClick={onAdvanceFrame}
-                disabled={!currentFrame && !isRunning}
-                className="timeline-button timeline-icon-button"
-                aria-label={
-                  queuedFrameIndex !== null && !isBubbleStreaming
-                    ? "Waiting for the next bubble"
-                    : isBubbleStreaming
-                      ? "Finish this bubble"
-                      : "Next bubble"
-                }
-                title={
-                  queuedFrameIndex !== null && !isBubbleStreaming
-                    ? "Waiting for the next bubble"
-                    : isBubbleStreaming
-                      ? "Finish this bubble"
-                      : "Next bubble"
-                }
-              >
-                {queuedFrameIndex !== null && !isBubbleStreaming ? (
-                  <WaitingGlyph />
-                ) : isBubbleStreaming ? (
-                  <FinishGlyph />
-                ) : (
-                  <StepForwardGlyph />
-                )}
-              </button>
-            </div>
-
-            <div className="timeline-meta">
-              <span className="timeline-pill">
-                {queuedFrameIndex !== null ? <WaitingGlyph /> : isRunning ? <SparkGlyph /> : <HandGlyph />}
-                {playbackStateLabel}
-              </span>
-              {currentChapter ? <span className="timeline-pill timeline-pill-muted">{currentChapter.label}</span> : null}
-              <div className="timeline-clock mono">
-                <span>{formatClock(currentTimeMs)}</span>
-                <span>/</span>
-                <span>{formatClock(totalDurationMs)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="timeline-track-shell">
-            <div className="timeline-marker-row" aria-hidden="true">
-              {chapters.map((chapter) => (
-                <button
-                  key={chapter.id}
-                  type="button"
-                  className="timeline-marker"
-                  style={{
-                    left:
-                      totalDurationMs > 0 ? `${Math.min((chapter.timestampMs / totalDurationMs) * 100, 100)}%` : "0%",
-                  }}
-                  onClick={() => onSelectFrame(chapter.frameIndex)}
-                  disabled={frames.length === 0}
-                  title={chapter.label}
-                />
-              ))}
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(frames.length - 1, 0)}
-              value={Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))}
-              onChange={(event) => onSelectFrame(Number(event.target.value))}
-              disabled={frames.length < 2}
-              className="timeline-slider"
-              aria-label="Playback timeline"
-            />
-          </div>
-
-        </div>
-
         {error ? <div className="notice-row notice-row-error">{error}</div> : null}
         {warnings.length ? (
           <div className="notice-row notice-row-warning">{warnings[warnings.length - 1]}</div>
@@ -891,7 +794,6 @@ export function CouncilStudio() {
   const [queuedFrameIndex, setQueuedFrameIndex] = useState<number | null>(null);
 
   const roster = [config.coordinator, ...config.members];
-  const usage = result?.usage ?? emptyUsage();
   const hasApiKey = apiKey.trim().length > 0;
   const timeline = buildPlaybackTimeline(result);
   const frames = timeline.frames;
@@ -1034,59 +936,6 @@ export function CouncilStudio() {
   function selectFrame(index: number) {
     setActiveFrameIndex(index);
     setQueuedFrameIndex(null);
-  }
-
-  function resetTimeline() {
-    if (frames.length === 0) {
-      return;
-    }
-
-    setActiveFrameIndex(0);
-    setQueuedFrameIndex(null);
-  }
-
-  function finishCurrentBubble() {
-    if (!currentFrame) {
-      return;
-    }
-
-    setRevealedBubbleId(currentFrame.id);
-    setRevealedBubbleChars(currentFrame.bubbleContent.length);
-    setCompletedBubbleIds((current) => ({ ...current, [currentFrame.id]: true }));
-  }
-
-  function goToPreviousFrame() {
-    if (activeFrameIndex === 0) {
-      return;
-    }
-
-    setQueuedFrameIndex(null);
-    setActiveFrameIndex((current) => Math.max(current - 1, 0));
-  }
-
-  function advanceFrame() {
-    if (currentFrame && revealedBubbleChars < currentFrame.bubbleContent.length) {
-      finishCurrentBubble();
-      return;
-    }
-
-    if (frames.length === 0) {
-      if (isRunning) {
-        setQueuedFrameIndex(0);
-      }
-      return;
-    }
-
-    const nextIndex = activeFrameIndex + 1;
-    if (nextIndex < frames.length) {
-      setQueuedFrameIndex(null);
-      setActiveFrameIndex(nextIndex);
-      return;
-    }
-
-    if (isRunning) {
-      setQueuedFrameIndex(nextIndex);
-    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -1282,22 +1131,8 @@ export function CouncilStudio() {
           onModeChange={(mode) => setConfig((current) => ({ ...current, mode }))}
           onPromptChange={(prompt) => setConfig((current) => ({ ...current, prompt }))}
           onAddMember={addMember}
-          onReset={() => {
-            setConfig(createDefaultInput());
-            setResult(null);
-            setError(null);
-            setStatusMessage(null);
-            setActiveFrameIndex(0);
-            setCompletedBubbleIds({});
-            setQueuedFrameIndex(null);
-            setRevealedBubbleId(null);
-            setRevealedBubbleChars(0);
-          }}
           onOpenParticipant={openParticipantEditor}
           onSelectFrame={selectFrame}
-          onPreviousFrame={goToPreviousFrame}
-          onResetTimeline={resetTimeline}
-          onAdvanceFrame={advanceFrame}
         />
       </form>
 
@@ -1306,7 +1141,6 @@ export function CouncilStudio() {
           hasApiKey={hasApiKey}
           apiKey={apiKey}
           draftApiKey={draftApiKey}
-          usage={usage}
           config={config}
           onDraftApiKeyChange={setDraftApiKey}
           onSaveApiKey={saveApiKey}

@@ -138,9 +138,9 @@ select {
 .stage-header {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.75rem;
-  padding: 0.85rem 0.95rem 0;
+  padding: 0.85rem 0.95rem 0.4rem;
 }
 
 .stage-metadata {
@@ -158,11 +158,13 @@ select {
 .stage-settings-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
+  justify-content: center;
   border-radius: 999px;
   border: 1px solid rgba(255, 231, 198, 0.14);
   background: rgba(255, 248, 237, 0.05);
-  padding: 0.55rem 0.82rem;
+  width: 2.8rem;
+  height: 2.8rem;
+  padding: 0;
   color: var(--foreground);
   font-size: 0.76rem;
   font-weight: 600;
@@ -180,6 +182,17 @@ select {
   height: 0.92rem;
 }
 
+.stage-settings-button-floating {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 40;
+  box-shadow:
+    0 0.8rem 1.8rem rgba(2, 5, 8, 0.24),
+    inset 0 1px 0 rgba(255, 250, 243, 0.07);
+  backdrop-filter: blur(22px);
+}
+
 .stage-settings-button:hover {
   transform: translateY(-1px);
   border-color: rgba(240, 171, 105, 0.42);
@@ -189,8 +202,9 @@ select {
 
 .cinema-stage {
   position: relative;
-  min-height: 23rem;
+  min-height: 28rem;
   overflow: hidden;
+  padding: 1rem 1rem 2rem;
 }
 
 .cinema-vignette,
@@ -207,58 +221,18 @@ select {
 }
 
 .council-floor-glow {
-  inset: auto 10% 3.5rem;
-  height: 5.5rem;
+  inset: 20% 14% 16%;
   border-radius: 999px;
-  background: radial-gradient(circle at center, rgba(74, 127, 134, 0.22), transparent 72%);
-  filter: blur(24px);
-}
-
-.hero-table-shadow {
-  position: absolute;
-  left: 50%;
-  top: 71%;
-  width: min(86%, 56rem);
-  height: 4.25rem;
-  transform: translate(-50%, -50%);
-  border-radius: 1.5rem;
-  background: rgba(0, 0, 0, 0.36);
-  filter: blur(22px);
-}
-
-.hero-table {
-  position: absolute;
-  left: 50%;
-  top: 68%;
-  width: min(86%, 56rem);
-  height: 5.5rem;
-  transform: translate(-50%, -50%);
-  border-radius: 1.5rem;
-  border: 1px solid rgba(255, 222, 187, 0.18);
-  background:
-    linear-gradient(180deg, rgba(255, 245, 226, 0.18), transparent 30%),
-    linear-gradient(180deg, var(--wood-1) 0%, var(--wood-2) 100%);
-  box-shadow:
-    inset 0 0.5rem 1rem rgba(255, 241, 219, 0.12),
-    inset 0 -0.9rem 1.4rem rgba(66, 33, 15, 0.28);
-}
-
-.hero-table-inner {
-  position: absolute;
-  inset: 0.55rem 0.7rem auto;
-  height: 0.7rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 239, 219, 0.12);
-  background:
-    linear-gradient(180deg, rgba(255, 247, 232, 0.18), rgba(255, 247, 232, 0.04)),
-    linear-gradient(180deg, rgba(47, 23, 13, 0.26) 0%, rgba(106, 67, 41, 0.12) 100%);
+  background: radial-gradient(circle at center, rgba(74, 127, 134, 0.18), transparent 70%);
+  filter: blur(36px);
 }
 
 .stage-seat {
   position: absolute;
   display: grid;
   justify-items: center;
-  gap: 0.35rem;
+  gap: 0.5rem;
+  width: min(100%, 10rem);
   transform: translate(-50%, -50%);
   transition:
     transform 260ms ease,
@@ -385,7 +359,7 @@ select {
 .stage-seat-meta {
   display: grid;
   justify-items: center;
-  gap: 0.08rem;
+  gap: 0.14rem;
   text-align: center;
 }
 
@@ -409,10 +383,11 @@ select {
 .stage-bubble {
   position: absolute;
   z-index: 7;
-  width: min(23rem, calc(100% - 1.5rem));
+  width: min(24rem, calc(100% - 2rem));
 }
 
 .stage-bubble-card {
+  position: relative;
   border-radius: 1.2rem;
   border: 1px solid rgba(255, 231, 198, 0.14);
   background:
@@ -423,6 +398,19 @@ select {
     0 1rem 2rem rgba(2, 5, 8, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
   animation: bubble-in 340ms cubic-bezier(0.2, 0.75, 0.2, 1);
+}
+
+.stage-bubble-card::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -0.52rem;
+  width: 1rem;
+  height: 1rem;
+  border-top: 1px solid rgba(255, 231, 198, 0.14);
+  border-left: 1px solid rgba(255, 231, 198, 0.14);
+  background: rgba(252, 248, 242, 0.98);
+  transform: translateX(-50%) rotate(45deg);
 }
 
 .stage-bubble-card-muted {
@@ -526,7 +514,10 @@ select {
 }
 
 .timeline-shell {
-  padding: 0.68rem 0.85rem 0.8rem;
+  border-top: 1px solid rgba(255, 235, 210, 0.08);
+  border-bottom: 1px solid rgba(255, 235, 210, 0.08);
+  background: linear-gradient(180deg, rgba(12, 18, 25, 0.9), rgba(10, 15, 21, 0.72));
+  padding: 0.8rem 0.95rem 0.9rem;
 }
 
 .timeline-controls {
@@ -841,7 +832,8 @@ select {
   position: relative;
   border-radius: 2rem;
   max-height: min(100%, 46rem);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .settings-modal-header {
@@ -856,7 +848,7 @@ select {
   display: grid;
   gap: 0.8rem;
   margin-top: 1.5rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .settings-stat-card {
@@ -879,7 +871,7 @@ select {
   display: grid;
   gap: 1.25rem;
   margin-top: 1.5rem;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .settings-modal-stack {
@@ -890,7 +882,7 @@ select {
 .settings-number-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @keyframes bubble-in {
@@ -925,13 +917,7 @@ select {
 
 @media (max-width: 900px) {
   .cinema-stage {
-    min-height: 21rem;
-  }
-
-  .hero-table,
-  .hero-table-shadow {
-    width: min(92%, 34rem);
-    height: 4.6rem;
+    min-height: 24rem;
   }
 
   .stage-seat-name {
@@ -965,13 +951,9 @@ select {
   }
 
   .cinema-stage {
-    min-height: 19rem;
-  }
-
-  .hero-table,
-  .hero-table-shadow {
-    width: min(94%, 26rem);
-    height: 4rem;
+    min-height: 22rem;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
   }
 
   .stage-avatar {
@@ -994,10 +976,7 @@ select {
   }
 
   .stage-bubble {
-    top: 8% !important;
-    left: 50% !important;
-    right: auto !important;
-    transform: translateX(-50%) !important;
+    width: min(19rem, calc(100% - 1rem));
   }
 
   .timeline-controls {
@@ -1006,7 +985,14 @@ select {
 
   .stage-settings-button {
     width: 100%;
-    justify-content: center;
+    max-width: none;
+  }
+
+  .stage-settings-button-floating {
+    top: 0.75rem;
+    right: 0.75rem;
+    width: 2.6rem;
+    height: 2.6rem;
   }
 
   .chamber-control-actions {
