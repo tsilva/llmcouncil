@@ -157,46 +157,32 @@ function buildPlaybackTimeline(result: RunResult | null): {
 }
 
 function seatPosition(index: number, total: number): { left: number; top: number } {
-  const angle = ((index / Math.max(total, 1)) * Math.PI * 2) - Math.PI / 2;
-  const radiusX = total <= 4 ? 34 : 38;
-  const radiusY = total <= 4 ? 25 : 30;
+  if (index === 0) {
+    return { left: 50, top: 62 };
+  }
+
+  const memberIndex = index - 1;
+  const depth = Math.floor(memberIndex / 2);
+  const side = memberIndex % 2 === 0 ? -1 : 1;
+  const baseOffset = total <= 4 ? 18 : total <= 6 ? 15 : 13;
+  const stepOffset = total <= 4 ? 14 : total <= 6 ? 12 : 10;
 
   return {
-    left: 50 + Math.cos(angle) * radiusX,
-    top: 50 + Math.sin(angle) * radiusY,
+    left: Math.max(8, Math.min(92, 50 + side * (baseOffset + depth * stepOffset))),
+    top: 64 + Math.min(depth, 2) * 2.4,
   };
 }
 
-function bubblePlacement(position: { left: number; top: number }): {
+function bubblePlacement(): {
   className: string;
   style: React.CSSProperties;
 } {
-  if (position.top <= 26) {
-    return {
-      className: "stage-bubble-center",
-      style: {
-        left: "50%",
-        top: "8%",
-        transform: "translateX(-50%)",
-      },
-    };
-  }
-
-  if (position.left < 50) {
-    return {
-      className: "stage-bubble-left",
-      style: {
-        left: `${Math.min(position.left + 13, 56)}%`,
-        top: `${Math.max(position.top - 15, 24)}%`,
-      },
-    };
-  }
-
   return {
-    className: "stage-bubble-right",
+    className: "stage-bubble-center",
     style: {
-      right: `${Math.min(100 - position.left + 13, 56)}%`,
-      top: `${Math.max(position.top - 15, 24)}%`,
+      left: "50%",
+      top: "10%",
+      transform: "translateX(-50%)",
     },
   };
 }
@@ -228,6 +214,75 @@ function SettingsGlyph() {
         d="M10.5 3.4h3l.5 2.2a7.8 7.8 0 0 1 1.6.9l2.1-.9 2.1 2.1-.9 2.1c.35.5.65 1.03.9 1.6l2.2.5v3l-2.2.5a7.8 7.8 0 0 1-.9 1.6l.9 2.1-2.1 2.1-2.1-.9c-.5.35-1.03.65-1.6.9l-.5 2.2h-3l-.5-2.2a7.8 7.8 0 0 1-1.6-.9l-2.1.9-2.1-2.1.9-2.1a7.8 7.8 0 0 1-.9-1.6l-2.2-.5v-3l2.2-.5c.24-.57.54-1.1.9-1.6l-.9-2.1 2.1-2.1 2.1.9a7.8 7.8 0 0 1 1.6-.9l.5-2.2Z"
       />
       <circle cx="12" cy="12" r="3.1" />
+    </svg>
+  );
+}
+
+function StepBackGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 6v12" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m17.5 7-7 5 7 5V7Z" />
+    </svg>
+  );
+}
+
+function RestartGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7 6.5H3.5V3" />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M4 6.5A8.5 8.5 0 1 1 4.7 17"
+      />
+    </svg>
+  );
+}
+
+function StepForwardGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M17.5 6v12" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m6.5 7 7 5-7 5V7Z" />
+    </svg>
+  );
+}
+
+function WaitingGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" opacity="0.35" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v5l3 2" />
+    </svg>
+  );
+}
+
+function FinishGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m6.5 7 5.25 5-5.25 5V7Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m12.25 7 5.25 5-5.25 5V7Z" />
+    </svg>
+  );
+}
+
+function SparkGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z" />
+    </svg>
+  );
+}
+
+function HandGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8 11V6.8a1.3 1.3 0 1 1 2.6 0V10m0 0V5.8a1.3 1.3 0 1 1 2.6 0v4m-2.6.2V5a1.3 1.3 0 1 1 2.6 0v5m0 .2V6.2a1.3 1.3 0 1 1 2.6 0v7.1c0 3.15-2.55 5.7-5.7 5.7H11c-3.87 0-7-3.13-7-7v-1.2a1.8 1.8 0 1 1 3.6 0V11H8Z"
+      />
     </svg>
   );
 }
@@ -371,15 +426,8 @@ function ChamberStage({
   onResetTimeline: () => void;
   onAdvanceFrame: () => void;
 }) {
-  const speakingIndex = currentFrame
-    ? Math.max(
-        roster.findIndex((participant) => participant.id === currentFrame.speakerId),
-        0,
-      )
-    : 0;
-  const speakingPosition = seatPosition(speakingIndex, roster.length);
   const bubble = currentFrame
-    ? bubblePlacement(speakingPosition)
+    ? bubblePlacement()
     : {
         className: "stage-bubble-center",
         style: {
@@ -401,16 +449,24 @@ function ChamberStage({
     ? `${currentFrame.chapterLabel} · ${currentFrame.speakerName}`
     : isRunning
       ? "Waiting for the first line"
-      : "Ready to stage the chamber";
+      : "Standby";
+  const playbackStateLabel =
+    queuedFrameIndex !== null ? "Queued" : isRunning ? "Live" : "Manual";
+  const bubbleHintLabel = currentFrame
+    ? isBubbleStreaming
+      ? "to finish"
+      : activeFrameIndex < frames.length - 1 || isRunning
+        ? "to continue"
+        : null
+    : isRunning
+      ? "to continue"
+      : null;
 
   return (
     <section className="chamber-shell">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-[color:var(--muted)]">LLM Council</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[color:var(--foreground)] sm:text-4xl">
-            The table is the whole show.
-          </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="status-chip">{isRunning ? "Live" : hasRun ? "Replay" : "Standby"}</span>
@@ -464,12 +520,6 @@ function ChamberStage({
 
       <div className="stage-frame">
         <div className="stage-header">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-[color:var(--muted)]">Prompt</p>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-[color:var(--foreground)]">
-              {prompt.trim() || "Set the prompt above, then run the council."}
-            </p>
-          </div>
           <div className="stage-metadata">
             <span>{playbackLabel}</span>
             {currentFrame ? (
@@ -495,7 +545,7 @@ function ChamberStage({
             return (
               <div
                 key={participant.id}
-                className={`stage-seat ${isSpeaking ? "is-active" : ""}`}
+                className={`stage-seat ${index === 0 ? "is-coordinator" : ""} ${isSpeaking ? "is-active" : ""}`}
                 style={{
                   left: `${position.left}%`,
                   top: `${position.top}%`,
@@ -532,63 +582,99 @@ function ChamberStage({
                 <p className={`stage-bubble-copy ${isBubbleStreaming ? "is-streaming" : ""}`}>
                   {displayedBubbleContent || "\u00a0"}
                 </p>
+                {bubbleHintLabel ? (
+                  <div className="stage-bubble-footer">
+                    <span className="stage-bubble-hint">
+                      Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
+                    </span>
+                  </div>
+                ) : null}
               </article>
-            ) : (
+            ) : isRunning ? (
               <article className="stage-bubble-card stage-bubble-card-muted">
                 <p className="stage-bubble-speaker">
                   Chamber
                   <span>idle</span>
                 </p>
                 <p className="stage-bubble-copy">
-                  {isRunning
-                    ? "The room is live. The first speech bubble will land here as soon as the coordinator responds."
-                    : "Seat each member, set the prompt, then run the council to watch the debate unfold in realtime."}
+                  The room is live. The first speech bubble will land here as soon as the coordinator responds.
                 </p>
+                {bubbleHintLabel ? (
+                  <div className="stage-bubble-footer">
+                    <span className="stage-bubble-hint">
+                      Hit <span className="stage-bubble-key">Space</span> {bubbleHintLabel}
+                    </span>
+                  </div>
+                ) : null}
               </article>
-            )}
+            ) : null}
           </div>
-        </div>
-
-        <div className="subtitle-ribbon">
-          <p className="subtitle-label">
-            {currentFrame ? `${currentFrame.speakerName} · ${currentFrame.chapterLabel}` : "Playback"}
-          </p>
-          <p className="subtitle-copy">
-            {currentFrame?.persona ||
-              "Each speaker keeps their own persona, while the chamber timeline lets you replay the entire exchange."}
-          </p>
         </div>
 
         <div className="timeline-shell">
           <div className="timeline-controls">
-            <button
-              type="button"
-              onClick={onPreviousFrame}
-              disabled={frames.length === 0 || activeFrameIndex === 0}
-              className="timeline-button"
-            >
-              Prev
-            </button>
-            <button
-              type="button"
-              onClick={onResetTimeline}
-              disabled={frames.length === 0 || activeFrameIndex === 0}
-              className="timeline-button timeline-button-primary"
-            >
-              Restart
-            </button>
-            <button
-              type="button"
-              onClick={onAdvanceFrame}
-              disabled={!currentFrame && !isRunning}
-              className="timeline-button"
-            >
-              {queuedFrameIndex !== null && !isBubbleStreaming ? "Waiting..." : isBubbleStreaming ? "Finish" : "Next"}
-            </button>
-            <div className="timeline-clock mono">
-              <span>{formatClock(currentTimeMs)}</span>
-              <span>/</span>
-              <span>{formatClock(totalDurationMs)}</span>
+            <div className="timeline-button-group">
+              <button
+                type="button"
+                onClick={onPreviousFrame}
+                disabled={frames.length === 0 || activeFrameIndex === 0}
+                className="timeline-button timeline-icon-button"
+                aria-label="Previous bubble"
+                title="Previous bubble"
+              >
+                <StepBackGlyph />
+              </button>
+              <button
+                type="button"
+                onClick={onResetTimeline}
+                disabled={frames.length === 0 || activeFrameIndex === 0}
+                className="timeline-button timeline-button-primary timeline-icon-button"
+                aria-label="Restart playback"
+                title="Restart playback"
+              >
+                <RestartGlyph />
+              </button>
+              <button
+                type="button"
+                onClick={onAdvanceFrame}
+                disabled={!currentFrame && !isRunning}
+                className="timeline-button timeline-icon-button"
+                aria-label={
+                  queuedFrameIndex !== null && !isBubbleStreaming
+                    ? "Waiting for the next bubble"
+                    : isBubbleStreaming
+                      ? "Finish this bubble"
+                      : "Next bubble"
+                }
+                title={
+                  queuedFrameIndex !== null && !isBubbleStreaming
+                    ? "Waiting for the next bubble"
+                    : isBubbleStreaming
+                      ? "Finish this bubble"
+                      : "Next bubble"
+                }
+              >
+                {queuedFrameIndex !== null && !isBubbleStreaming ? (
+                  <WaitingGlyph />
+                ) : isBubbleStreaming ? (
+                  <FinishGlyph />
+                ) : (
+                  <StepForwardGlyph />
+                )}
+              </button>
+            </div>
+
+            <div className="timeline-meta">
+              <span className="timeline-pill">
+                {queuedFrameIndex !== null ? <WaitingGlyph /> : isRunning ? <SparkGlyph /> : <HandGlyph />}
+                {playbackStateLabel}
+              </span>
+              {currentChapter ? <span className="timeline-pill timeline-pill-muted">{currentChapter.label}</span> : null}
+              <div className="timeline-clock mono">
+                <span>{formatClock(currentTimeMs)}</span>
+                <span>/</span>
+                <span>{formatClock(totalDurationMs)}</span>
+              </div>
             </div>
           </div>
 
@@ -621,16 +707,6 @@ function ChamberStage({
             />
           </div>
 
-          <div className="timeline-caption">
-            <span>
-              {queuedFrameIndex !== null
-                ? "The next bubble is queued and will open as soon as that response lands."
-                : isRunning
-                  ? "Space or Next advances manually while the council keeps generating in the background."
-                  : "Space or Next advances one bubble at a time."}
-            </span>
-            {currentChapter ? <span>{currentChapter.label}</span> : null}
-          </div>
         </div>
 
         {error ? <div className="notice-row notice-row-error">{error}</div> : null}
@@ -1028,7 +1104,7 @@ export function CouncilStudio() {
         ))}
       </datalist>
 
-      <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-[96rem] flex-col gap-8 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-[90rem] flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6 lg:py-5">
         <ChamberStage
           roster={roster}
           currentFrame={currentFrame}
